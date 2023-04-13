@@ -183,7 +183,7 @@ def on_root_configure(event):
     global previous_window_size
     current_window_size = (root.winfo_width(), root.winfo_height())
     if folder_path and (previous_window_size is None or previous_window_size != current_window_size):
-        update_display()
+        root.after(2000, update_display)  # Increase the delay to 500 milliseconds
         previous_window_size = current_window_size
         save_last_directory()
 
