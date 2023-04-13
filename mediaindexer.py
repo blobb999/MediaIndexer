@@ -3,27 +3,19 @@ import tkinter as tk
 from tkinter import filedialog
 import tkinter.font as tkFont
 import configparser
+import re
 
 folder_path = ''
 config = configparser.ConfigParser()
+previous_window_size = None
 
 def on_mousewheel(event):
     media_canvas.yview_scroll(int((event.delta / 120)), "units")
-
-def on_root_configure(event):
-    if hasattr(root, 'folder_path'):
-        update_display()
 
 def update_display():
     if folder_path:
         root.after(100, lambda: display_folders(folder_path))
         root.after(100, lambda: display_files(folder_path))
-
-def update_window_size():
-    root.update()
-    window_width = root.winfo_width()
-    window_height = root.winfo_height()
-    return f"{window_width}x{window_height}"
 
 def save_last_directory(path=None):
     if path:
@@ -56,6 +48,10 @@ def calculate_columns(window_width, button_width):
     padding = 10
     return max(1, (window_width - padding) // (button_width + padding))
 
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split('(\d+)', s)]
+
 def search_files_recursive(path, media_extensions, playlist_extensions, search_results):
     for entry in os.listdir(path):
         entry_path = os.path.join(path, entry)
@@ -72,7 +68,7 @@ def perform_search():
         search_results = []
         search_files_recursive(folder_path, media_extensions, playlist_extensions, search_results)
         search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
-        display_folders(folder_path, search_results)  # Hinzufügen von search_results als Argument
+        display_folders(folder_path, search_results)
         display_files(search_results)
 
 def display_folders(folder_path, search_results=None):
@@ -124,6 +120,11 @@ def display_folders(folder_path, search_results=None):
             if row >= 3:
                 break
 
+import re
+
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split('(\d+)', s)]
 
 def display_files(files_or_folder_path):
     media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
@@ -143,8 +144,10 @@ def display_files(files_or_folder_path):
     if isinstance(files_or_folder_path, str): 
         folder_path = files_or_folder_path
         files = os.listdir(folder_path)
+        files.sort(key=natural_sort_key)  # Add this line to sort the files
     else:  
         files = files_or_folder_path
+        files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))  # Add this line to sort the files
 
     for file in files:
         if file.lower().endswith(media_extensions) or file.lower().endswith(playlist_extensions):
@@ -176,13 +179,12 @@ def display_files(files_or_folder_path):
     media_frame.config(height=(row + 1) * (media_box.winfo_reqheight() + 10))
     media_canvas.config(scrollregion=media_canvas.bbox('all'))
 
-def on_resize(event):
-    if not root:  
-        return
-
-    media_canvas.configure(scrollregion=media_canvas.bbox('all'))
-    if hasattr(root, 'folder_path'):
+def on_root_configure(event):
+    global previous_window_size
+    current_window_size = (root.winfo_width(), root.winfo_height())
+    if folder_path and (previous_window_size is None or previous_window_size != current_window_size):
         update_display()
+        previous_window_size = current_window_size
         save_last_directory()
 
 root = tk.Tk()
@@ -192,11 +194,15 @@ root.bind('<Configure>', on_root_configure)
 frame = tk.Frame(root, pady=10)
 frame.pack(fill='x')
 
+frame.columnconfigure(0, weight=1)
+frame.columnconfigure(1, weight=1)
+frame.columnconfigure(2, weight=1)
+
 open_button = tk.Button(frame, text="Open folder", command=open_folder)
 open_button.grid(row=0, column=0, padx=5, pady=5)
 
 search_entry = tk.Entry(frame)
-search_entry.grid(row=0, column=1, padx=5, pady=5)
+search_entry.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
 
 search_button = tk.Button(frame, text="Search", command=perform_search)
 search_button.grid(row=0, column=2, padx=5, pady=5)
