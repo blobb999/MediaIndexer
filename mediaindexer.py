@@ -4,6 +4,7 @@ from tkinter import filedialog
 import tkinter.font as tkFont
 import configparser
 import re
+import tkinter.ttk as ttk
 
 folder_path = ''
 config = configparser.ConfigParser()
@@ -120,8 +121,6 @@ def display_folders(folder_path, search_results=None):
             if row >= 3:
                 break
 
-import re
-
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower()
             for text in re.split('(\d+)', s)]
@@ -144,10 +143,10 @@ def display_files(files_or_folder_path):
     if isinstance(files_or_folder_path, str): 
         folder_path = files_or_folder_path
         files = os.listdir(folder_path)
-        files.sort(key=natural_sort_key)  # Add this line to sort the files
+        files.sort(key=natural_sort_key)
     else:  
         files = files_or_folder_path
-        files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))  # Add this line to sort the files
+        files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
 
     for file in files:
         if file.lower().endswith(media_extensions) or file.lower().endswith(playlist_extensions):
@@ -183,7 +182,7 @@ def on_root_configure(event):
     global previous_window_size
     current_window_size = (root.winfo_width(), root.winfo_height())
     if folder_path and (previous_window_size is None or previous_window_size != current_window_size):
-        root.after(2000, update_display)  # Increase the delay to 500 milliseconds
+        root.after(2000, update_display)
         previous_window_size = current_window_size
         save_last_directory()
 
@@ -228,6 +227,15 @@ media_canvas.create_window((0, 0), window=media_frame, anchor='nw')
 media_canvas.configure(scrollregion=media_canvas.bbox('all'))
 
 media_canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+style = ttk.Style()
+style.configure("TSizegrip", relief='flat')
+
+bottom_frame = tk.Frame(root) 
+bottom_frame.pack(side='bottom', fill='x') 
+
+root.sizegrip = ttk.Sizegrip(bottom_frame, style="TSizegrip") 
+root.sizegrip.grid(row=0, column=0, sticky='se')
 
 load_last_directory()
 
