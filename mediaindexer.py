@@ -148,6 +148,8 @@ def display_files(files_or_folder_path):
         files = files_or_folder_path
         files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
 
+    media_box = None  # Add this line to initialize media_box to None
+
     for file in files:
         if file.lower().endswith(media_extensions) or file.lower().endswith(playlist_extensions):
             if isinstance(files_or_folder_path, str):
@@ -175,8 +177,9 @@ def display_files(files_or_folder_path):
                 if row >= 100:
                     break
 
-    media_frame.config(height=(row + 1) * (media_box.winfo_reqheight() + 10))
-    media_canvas.config(scrollregion=media_canvas.bbox('all'))
+    if media_box is not None:
+        media_frame.config(height=(row + 1) * (media_box.winfo_reqheight() + 10))
+        media_canvas.config(scrollregion=media_canvas.bbox('all'))
 
 def on_root_configure(event):
     global previous_window_size
