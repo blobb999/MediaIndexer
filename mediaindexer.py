@@ -1,222 +1,345 @@
 import os
-import re
-import itertools
+import tkinter as tk
 from tkinter import filedialog
-from tkinter import messagebox
-from tkinter import Tk, Button, Label, Entry, StringVar
-from urllib.parse import quote
-from xml.etree.ElementTree import Element, SubElement, tostring
-from xml.dom import minidom
-from natsort import natsorted
+import tkinter.font as tkFont
+import configparser
+import re
+import tkinter.ttk as ttk
+from ttkthemes import ThemedStyle
 
+root = tk.Tk()
+root.title("Media Indexer and Player")
+
+style = ThemedStyle(root)
+style.set_theme('arc')
+
+
+folder_path = ''
+config = configparser.ConfigParser()
+previous_window_size = None
+initial_load = True
+
+def on_mousewheel(event):
+    media_canvas.yview_scroll(int((event.delta / 120)), "units")
+
+def update_display():
+    if folder_path:
+        root.after(100, lambda: display_folders(folder_path))
+        root.after(100, lambda: display_files(folder_path))
+
+
+def create_default_config(config_file_path):
+    default_config = configparser.ConfigParser()
+    default_config['LastDirectory'] = {'path': ''}
+    default_config['WindowSize'] = {'size': '800x600'}
+    default_config['PanedWindow'] = {'position': '0'}
+
+    with open(config_file_path, 'w') as configfile:
+        default_config.write(configfile)
+
+
+def save_panedwindow_position():
+    try:
+        position = paned_window.sashpos(0)
+    except Exception as e:
+        print(f"Error getting sash position: {e}")
+        position = 0
+
+    config['PanedWindow'] = {'position': position}
+    with open('MediaIndexer.cfg', 'w') as configfile:
+        config.write(configfile)
+
+def load_panedwindow_position():
+    try:
+        position_str = config['PanedWindow']['position']
+        position = int(re.sub('[^0-9]', '', position_str))  # extract only numeric characters
+        return position
+    except Exception as e:
+        print(f"Error loading sash position: {e}")
+        return 0
+
+def on_sash_move(*args):
+    position = paned_window.sashpos(0)
+    save_panedwindow_position(position)
+
+def print_config_file_contents():
+    with open('MediaIndexer.cfg', 'r') as configfile:
+        print(configfile.read())
+
+def set_paned_position():
+    paned_position = load_panedwindow_position()
+    paned_window.sashpos(0, paned_position)
+
+def save_last_directory(path=None):
+    if path:
+        config['LastDirectory'] = {'path': path}
+    window_size = f"{root.winfo_width()}x{root.winfo_height()}"
+    config['WindowSize'] = {'size': window_size}
+    save_panedwindow_position()
+    with open('MediaIndexer.cfg', 'w') as configfile:
+        config.write(configfile)
+
+def load_last_directory():
+    initial_load = False
+    global folder_path
+    config_file_path = 'MediaIndexer.cfg'
+
+    if not os.path.exists(config_file_path):
+        create_default_config(config_file_path)
+        
+    config.read(config_file_path)
+
+    try:
+        if 'LastDirectory' in config and 'path' in config['LastDirectory']:
+            folder_path = config['LastDirectory']['path']
+            if os.path.isdir(folder_path):
+                update_display()
+        if 'WindowSize' in config and 'size' in config['WindowSize']:
+            window_size = config['WindowSize']['size']
+            root.geometry(window_size)
+            update_display()
+
+            # Load paned window position only if window size is larger than 1x1
+            window_width, window_height = [int(x) for x in window_size.split('x')]
+            if window_width > 1 and window_height > 1:
+                if 'PanedWindow' in config and 'position' in config['PanedWindow']:
+                    paned_position = load_panedwindow_position()
+                    root.after(1000, lambda: paned_window.sashpos(0, paned_position))
+                else:
+                    print("PanedWindow section not found in config")
+    except Exception as e:
+        print(f"Error loading last directory: {e}")
+
+def open_folder():
+    global folder_path
+    folder_path = filedialog.askdirectory()
+    if folder_path:
+        save_last_directory(folder_path)
+        update_display()
+
+def calculate_columns(window_width, button_width):
+    padding = 10
+    scrollbar_width = 20  # Add an approximate scrollbar width
+    return max(1, (window_width - padding - scrollbar_width) // (button_width + padding))
 
 def natural_sort_key(s):
-    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split('(\d+)', s)]
+
+def search_files_recursive(path, media_extensions, playlist_extensions, search_results):
+    for entry in os.listdir(path):
+        entry_path = os.path.join(path, entry)
+        if os.path.isdir(entry_path):
+            search_files_recursive(entry_path, media_extensions, playlist_extensions, search_results)
+        elif entry.lower().endswith(media_extensions) or entry.lower().endswith(playlist_extensions):
+            search_results.append(entry_path)
+
+def perform_search():
+    search_term = search_entry.get()
+    if folder_path and search_term:
+        media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
+        playlist_extensions = ('.xspf',)
+        search_results = []
+        search_files_recursive(folder_path, media_extensions, playlist_extensions, search_results)
+        search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
+        display_folders(folder_path, search_results)
+        display_files(search_results)
+
+def display_folders(folder_path, search_results=None):
+    for widget in folder_frame.winfo_children():
+        widget.destroy()
+
+    window_width = root.winfo_width()
+
+    button_width = 170
+
+    num_columns = calculate_columns(window_width, button_width)
+
+    row, column = 0, 0
+
+    if search_results is None:
+        folders = [entry for entry in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, entry))]
+    else:
+        folders = sorted({os.path.dirname(result) for result in search_results})
+
+    # Folder Up Button
+    parent_folder = os.path.dirname(folder_path)
+    if parent_folder and search_results is None:
+        folder_up_button = tk.Button(folder_frame, text="Folder Up", bg='green', fg='white', width=20, height=2, wraplength=150, command=lambda: (display_folders(parent_folder), display_files(parent_folder)))
+        folder_up_button.grid(row=row, column=column, padx=10, pady=5)
+
+        default_font = folder_up_button.cget("font")
+        new_font = tkFont.Font(font=default_font)
+        new_font.config(size=int(new_font['size'] * 1.2), weight='bold')
+        folder_up_button.config(font=new_font)
+
+        column += 1
+        if column >= num_columns:
+            row += 1
+            column = 0
+
+    for folder in folders:
+        folder_button = tk.Button(folder_frame, text=folder, width=20, height=2, wraplength=150, command=lambda path=os.path.join(folder_path, folder): (display_folders(path), display_files(path)))
+        folder_button.grid(row=row, column=column, padx=10, pady=5)
+
+        default_font = folder_button.cget("font")
+        new_font = tkFont.Font(font=default_font)
+        new_font.config(size=int(new_font['size'] * 1.2), weight='bold')
+        folder_button.config(font=new_font)
+
+        column += 1
+        if column >= num_columns:
+            row += 1
+            column = 0
+            if row >= 100:
+                break
+
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split('(\d+)', s)]
+
+def display_files(files_or_folder_path):
+    media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
+    playlist_extensions = ('.xspf',)
+
+    padding_x = 10
+
+    for widget in media_frame.winfo_children():
+        widget.destroy()
+
+    window_width = root.winfo_width()
+
+    button_width = 170
+
+    num_columns = calculate_columns(window_width - media_scrollbar.winfo_width(), button_width)
+
+    row, column = 0, 0
+    
+    if isinstance(files_or_folder_path, str): 
+        folder_path = files_or_folder_path
+        files = os.listdir(folder_path)
+        files.sort(key=natural_sort_key)
+    else:  
+        files = files_or_folder_path
+        files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+
+    media_box = None
+
+    for file in files:
+        if file.lower().endswith(media_extensions) or file.lower().endswith(playlist_extensions):
+            if isinstance(files_or_folder_path, str):
+                file_path = os.path.join(folder_path, file)
+            else:
+                file_path = file
+                file = os.path.basename(file)
+            file_name, file_ext = os.path.splitext(file)
+
+            media_box = tk.Button(media_frame, text=file_name, width=20, height=2, wraplength=150, command=lambda path=file_path: os.startfile(path))
+            media_box.grid(row=row, column=column, padx=10, pady=5)
+
+            default_font = media_box.cget("font")
+            new_font = tkFont.Font(font=default_font)
+            new_font.config(size=int(new_font['size'] * 1.2), weight='bold')
+            media_box.config(font=new_font)
+
+            if file_ext.lower() in playlist_extensions:
+                media_box.config(bg='yellow')
+
+            column += 1
+            if column >= num_columns:
+                row += 1
+                column = 0
+                if row >= 100:
+                    break
+    if media_box:
+        media_frame_width = (button_width + padding_x) * num_columns
+        media_frame.config(width=media_frame_width, height=(row + 1) * (media_box.winfo_reqheight() + 10))
+        media_canvas.config(width=media_frame_width + padding_x + media_scrollbar.winfo_width(), scrollregion=media_canvas.bbox('all'))
+
+def on_root_configure(event):
+    global previous_window_size, initial_load
+    current_window_size = (root.winfo_width(), root.winfo_height())
+    
+    if folder_path and (previous_window_size is None or previous_window_size != current_window_size):
+        root.after(2000, update_display)
+        previous_window_size = current_window_size
+        save_last_directory()
+        
+        if not initial_load:
+            # Save paned window position only if window size is larger than 1x1
+            if current_window_size[0] > 1 and current_window_size[1] > 1:
+                save_panedwindow_position()
+
+def on_keypress(event):
+    if event.keysym == 'Return':
+        perform_search()
+
+def on_closing():
+    save_last_directory()
+    root.destroy()
 
 
-def delete_old_playlists(directory):
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            if file.endswith('.xspf') or file.endswith('.m3u'):
-                os.remove(os.path.join(root, file))
+root.title("Media Indexer and Player")
 
+root.bind('<Configure>', on_root_configure)
 
-def create_playlist(directory):
-    media_files = sorted([f for f in os.listdir(directory) if f.endswith(('.mp4', '.mp3', '.mkv', '.avi'))], key=natural_sort_key)
+frame = tk.Frame(root, pady=10)
+frame.pack(fill='x')
 
-    if not media_files:
-        return 0
+frame.columnconfigure(0, weight=1)
+frame.columnconfigure(1, weight=1)
+frame.columnconfigure(2, weight=1)
 
-    playlist = Element('playlist', {'version': '1', 'xmlns': 'http://xspf.org/ns/0/'})
-    title = SubElement(playlist, 'title')
-    title.text = 'Playlist'
+open_button = tk.Button(frame, text="Open folder", command=open_folder)
+open_button.grid(row=0, column=0, padx=5, pady=5)
 
-    track_list = SubElement(playlist, 'trackList')
+search_entry = tk.Entry(frame)
+search_entry.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+search_entry.bind('<Key>', on_keypress)
 
-    for media_file in media_files:
-        track = SubElement(track_list, 'track')
-        location = SubElement(track, 'location')
-        file_path = os.path.join(directory, media_file).replace('\\', '/')
-        encoded_path = quote(file_path, safe=":/")
-        location.text = f'file:///{encoded_path}'
+search_button = tk.Button(frame, text="Search", command=perform_search)
+search_button.grid(row=0, column=2, padx=5, pady=5)
 
-    xml_string = tostring(playlist, 'utf-8')
-    pretty_xml = minidom.parseString(xml_string).toprettyxml(indent='  ')
+paned_window = ttk.Panedwindow(root, orient=tk.VERTICAL)
+paned_window.pack(expand=True, fill='both')
 
-    # Use the folder name for the playlist file
-    folder_name = os.path.basename(directory)
-    parent_directory = os.path.dirname(directory)
-    playlist_filename = os.path.join(parent_directory, f'{folder_name}.xspf')
+s = ttk.Style()
+s.configure("TPanedwindow", background='grey', sashthickness=5)
 
-    with open(playlist_filename, 'w', encoding='utf-8') as f:
-        f.write(pretty_xml)
+folder_frame = tk.Frame(paned_window)
+paned_window.add(folder_frame, weight=1)
 
-    return len(media_files)
+media_outer_frame = tk.Frame(paned_window)
+paned_window.add(media_outer_frame, weight=1)
 
+media_canvas = tk.Canvas(media_outer_frame)
+media_canvas.pack(side='left', expand=True, fill='both')
 
-def create_playlists_recursively(directory):
-    playlist_count = 0
-    file_count = 0
+media_scrollbar = tk.Scrollbar(media_outer_frame, orient='vertical', command=media_canvas.yview)
+media_scrollbar.pack(side='right', fill='y')
+media_canvas.configure(yscrollcommand=media_scrollbar.set)
 
-    delete_old_playlists(directory)
-    for root, dirs, files in os.walk(directory):
-        files_added = create_playlist(root)
-        if files_added > 0:
-            playlist_count += 1
-            file_count += files_added
+media_frame = tk.Frame(media_canvas)
+media_canvas.create_window((0, 0), window=media_frame, anchor='nw')
+media_canvas.configure(scrollregion=media_canvas.bbox('all'))
 
-        # Add the storyline playlist creation here
-        storyline_files_added = create_storyline_playlist(root)
-        if storyline_files_added > 0:
-            playlist_count += 1
-            file_count += storyline_files_added
+media_canvas.bind_all("<MouseWheel>", on_mousewheel)
 
-    combine_playlists(directory)
+load_last_directory()
 
-    messagebox.showinfo("Result", f"{playlist_count} playlists created with a total of {file_count} files.")
+if __name__ == '__main__':
+    style = ttk.Style()
+    style.configure("TSizegrip", relief='flat')
 
+    bottom_frame = tk.Frame(root)
+    bottom_frame.pack(side='bottom', fill='x')
 
-def combine_playlists(parent_directory):
-    combined_playlist_count = 0
+    root.sizegrip = ttk.Sizegrip(bottom_frame, style="TSizegrip")
+    root.sizegrip.grid(row=0, column=0, sticky='se')
 
-    for root, dirs, files in os.walk(parent_directory, topdown=False):
-        playlist_files = [file for file in files if file.endswith('.xspf')]
+    root.after(100, update_display)
+    root.after(100, lambda: display_folders(folder_path))
+    root.after(100, lambda: display_files(folder_path))
 
-        if len(playlist_files) > 1:
-            combined_tracks = []
-
-            for file in playlist_files:
-                file_path = os.path.join(root, file)
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    xml_tree = minidom.parseString(content)
-                    track_list = xml_tree.getElementsByTagName('trackList')[0]
-                    tracks = track_list.getElementsByTagName('track')
-
-                    for track in tracks:
-                        location = track.getElementsByTagName('location')[0]
-                        track_et = Element('track')
-                        location_et = SubElement(track_et, 'location')
-                        location_et.text = location.firstChild.data
-                        combined_tracks.append(track_et)
-
-            combined_tracks = natsorted(combined_tracks, key=lambda t: t.find('location').text)
-            playlist = Element('playlist', {'version': '1', 'xmlns': 'http://xspf.org/ns/0/'})
-            title = SubElement(playlist, 'title')
-            title.text = 'Playlist'
-            track_list = SubElement(playlist, 'trackList')
-
-            for track in combined_tracks:
-                track_list.append(track)
-
-            xml_string = tostring(playlist, 'utf-8')
-            pretty_xml = minidom.parseString(xml_string).toprettyxml(indent='  ')
-
-            folder_name = os.path.basename(root)
-            # Speichere die kombinierte Playlist im übergeordneten Verzeichnis
-            parent_folder = os.path.dirname(root)
-            combined_playlist_filename = os.path.join(parent_folder, f'{folder_name}.xspf')
-
-            with open(combined_playlist_filename, 'w', encoding='utf-8') as f:
-                f.write(pretty_xml)
-
-            combined_playlist_count += 1
-
-    messagebox.showinfo("Result", f"{combined_playlist_count} combined playlists created.")
-
-def remove_brackets(term):
-    return term.replace("(", "").replace(")", "")
-
-
-def create_storyline_playlist(directory):
-    storyline_file = os.path.join(directory, "Storyline.txt")
-
-    if not os.path.exists(storyline_file):
-        return 0
-
-    with open(storyline_file, "r", encoding="utf-8") as f:
-        storyline_names = [line.strip() for line in f]
-
-    if not storyline_names:
-        return 0
-
-    media_files = []
-    for root, _, files in os.walk(directory):
-        media_files.extend([os.path.join(root, f) for f in files if f.endswith(('.mp4', '.mp3', '.mkv', '.avi'))])
-
-    matching_files = []
-    for name in storyline_names:
-        name_parts = [remove_brackets(part) for part in name.lower().split()]
-
-        best_match = None
-        max_common_elements = 1  # Initialize with 1, so we start searching for 2 common elements as required
-        for file in media_files:
-            filename = os.path.basename(file)
-            file_parts = [remove_brackets(part) for part in os.path.splitext(filename)[0].lower().split()]
-
-            common_elements = len(set(name_parts) & set(file_parts))
-            if common_elements > max_common_elements and file not in matching_files:
-                best_match = file
-                max_common_elements = common_elements
-
-        if best_match:
-            matching_files.append(best_match)
-
-    if not matching_files:
-        return 0
-
-    playlist = Element('playlist', {'version': '1', 'xmlns': 'http://xspf.org/ns/0/'})
-    title = SubElement(playlist, 'title')
-    title.text = 'Storyline Playlist'
-
-    track_list = SubElement(playlist, 'trackList')
-
-    for media_file in matching_files:
-        track = SubElement(track_list, 'track')
-        location = SubElement(track, 'location')
-        file_path = media_file.replace('\\', '/')
-        encoded_path = quote(file_path, safe=":/")
-        location.text = f'file:///{encoded_path}'
-
-    xml_string = tostring(playlist, 'utf-8')
-    pretty_xml = minidom.parseString(xml_string).toprettyxml(indent='  ')
-
-    playlist_filename = os.path.join(directory, f'Storyline.xspf')
-
-    with open(playlist_filename, 'w', encoding='utf-8') as f:
-        f.write(pretty_xml)
-
-    return len(matching_files)
-
-
-def browse_directory():
-    directory = filedialog.askdirectory()
-    folder_path.set(directory)
-
-
-def main():
-    global folder_path
-
-    root = Tk()
-    root.title("VLC Playlist Creator")
-    root.geometry("400x200")
-
-    folder_path = StringVar()
-
-    browse_button = Button(root, text="Browse Directory", command=browse_directory)
-    browse_button.pack(pady=10)
-
-    folder_label = Label(root, text="Directory:")
-    folder_label.pack()
-
-    folder_entry = Entry(root, textvariable=folder_path, width=50)
-    folder_entry.pack(pady=10)
-
-    create_button = Button(root, text="Create Playlists", command=lambda: [create_playlists_recursively(folder_path.get()), combine_playlists(folder_path.get())])
-    create_button.pack(pady=10)
-
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
