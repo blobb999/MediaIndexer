@@ -327,19 +327,19 @@ media_canvas.bind_all("<MouseWheel>", on_mousewheel)
 
 load_last_directory()
 
-style = ttk.Style()
-style.configure("TSizegrip", relief='flat')
+if __name__ == '__main__':
+    style = ttk.Style()
+    style.configure("TSizegrip", relief='flat')
 
-bottom_frame = tk.Frame(root)
-bottom_frame.pack(side='bottom', fill='x')
+    bottom_frame = tk.Frame(root)
+    bottom_frame.pack(side='bottom', fill='x')
 
-root.sizegrip = ttk.Sizegrip(bottom_frame, style="TSizegrip")
-root.sizegrip.grid(row=0, column=0, sticky='se')
+    root.sizegrip = ttk.Sizegrip(bottom_frame, style="TSizegrip")
+    root.sizegrip.grid(row=0, column=0, sticky='se')
 
-root.after(100, update_display)
-root.after(100, lambda: display_folders(folder_path))
-root.after(100, lambda: display_files(folder_path))
+    root.after(100, update_display)
+    root.after(100, lambda: display_folders(folder_path))
+    root.after(100, lambda: display_files(folder_path))
 
-#root.bind('<Configure>', on_root_configure)
-root.protocol("WM_DELETE_WINDOW", on_closing)
-root.mainloop()
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    root.mainloop()
