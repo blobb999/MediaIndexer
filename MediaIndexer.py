@@ -145,14 +145,29 @@ def perform_search():
         media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
         playlist_extensions = ('.xspf',)
         search_results = []
+
+        # Bereinige vorherige Ergebnisse aus den Frames
+        for widget in folder_frame.winfo_children():
+            widget.destroy()
+        for widget in media_frame.winfo_children():
+            widget.destroy()
+
+        # Aktualisiere Frames nach dem Löschen
+        folder_frame.update_idletasks()
+        media_frame.update_idletasks()
+
+        # Führe die Suche durch
         search_files_recursive(folder_path, media_extensions, playlist_extensions, search_results)
         search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
         display_folders(folder_path, search_results)
         display_files(search_results)
 
+
 def display_folders(folder_path, search_results=None):
+    # Sicherstellen, dass alle Widgets zerstört werden, bevor neue erstellt werden
     for widget in folder_frame.winfo_children():
-        widget.destroy()
+        widget.destroy()  # Dies ist korrekt
+    folder_frame.update_idletasks()  # Optional: Aktualisieren, um sicherzustellen, dass die Widgets zerstört wurden
 
     window_width = root.winfo_width()
 
@@ -209,8 +224,10 @@ def display_files(files_or_folder_path):
 
     padding_x = 10
 
+    # Bereinige die widgets im media_frame
     for widget in media_frame.winfo_children():
         widget.destroy()
+    media_frame.update_idletasks()  # Aktualisieren, um sicherzustellen, dass die Widgets zerstört wurden
 
     window_width = root.winfo_width()
 
@@ -260,10 +277,13 @@ def display_files(files_or_folder_path):
                 column = 0
                 if row >= 100:
                     break
+
+    # Berechne die Scrollregion korrekt und aktualisiere die Canvas
     if media_box:
         media_frame_width = (button_width + padding_x) * num_columns
         media_frame.config(width=media_frame_width, height=(row + 1) * (media_box.winfo_reqheight() + 10))
-        media_canvas.config(width=media_frame_width + padding_x + media_scrollbar.winfo_width(), scrollregion=media_canvas.bbox('all'))
+        media_canvas.configure(scrollregion=media_canvas.bbox('all'))
+
 
 def on_root_configure(event):
     global previous_window_size, initial_load
@@ -283,6 +303,11 @@ def on_keypress(event):
         perform_search()
 
 def on_closing():
+    # Bereinigen aller Widgets vor dem Schließen
+    for widget in folder_frame.winfo_children():
+        widget.destroy()
+
+    # Schließe das Hauptfenster
     save_last_directory()
     root.destroy()
 
