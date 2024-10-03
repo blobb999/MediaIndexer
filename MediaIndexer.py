@@ -13,7 +13,6 @@ root.title("Media Indexer and Player")
 style = ThemedStyle(root)
 style.set_theme('arc')
 
-
 folder_path = ''
 config = configparser.ConfigParser()
 previous_window_size = None
@@ -27,7 +26,6 @@ def update_display():
         root.after(100, lambda: display_folders(folder_path))
         root.after(100, lambda: display_files(folder_path))
 
-
 def create_default_config(config_file_path):
     default_config = configparser.ConfigParser()
     default_config['LastDirectory'] = {'path': ''}
@@ -36,7 +34,6 @@ def create_default_config(config_file_path):
 
     with open(config_file_path, 'w') as configfile:
         default_config.write(configfile)
-
 
 def save_panedwindow_position():
     try:
@@ -80,7 +77,6 @@ def save_last_directory(path=None):
         config.write(configfile)
 
 def load_last_directory():
-    initial_load = False
     global folder_path
     config_file_path = 'MediaIndexer.cfg'
 
@@ -127,12 +123,21 @@ def natural_sort_key(s):
             for text in re.split('(\d+)', s)]
 
 def search_files_recursive(path, media_extensions, playlist_extensions, search_results):
-    for entry in os.listdir(path):
-        entry_path = os.path.join(path, entry)
-        if os.path.isdir(entry_path):
-            search_files_recursive(entry_path, media_extensions, playlist_extensions, search_results)
-        elif entry.lower().endswith(media_extensions) or entry.lower().endswith(playlist_extensions):
-            search_results.append(entry_path)
+    # Using an iterative approach to avoid stack overflow
+    stack = [path]
+    while stack:
+        current_path = stack.pop()
+        try:
+            entries = os.listdir(current_path)
+        except PermissionError:
+            continue  # Handle directories where access is denied
+        
+        for entry in entries:
+            entry_path = os.path.join(current_path, entry)
+            if os.path.isdir(entry_path):
+                stack.append(entry_path)
+            elif entry.lower().endswith(media_extensions) or entry.lower().endswith(playlist_extensions):
+                search_results.append(entry_path)
 
 def perform_search():
     search_term = search_entry.get()
@@ -157,10 +162,14 @@ def display_folders(folder_path, search_results=None):
 
     row, column = 0, 0
 
-    if search_results is None:
-        folders = [entry for entry in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, entry))]
-    else:
-        folders = sorted({os.path.dirname(result) for result in search_results})
+    try:
+        if search_results is None:
+            folders = [entry for entry in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, entry))]
+        else:
+            folders = sorted({os.path.dirname(result) for result in search_results})
+    except PermissionError:
+        print(f"Permission denied: {folder_path}")
+        folders = []
 
     # Folder Up Button
     parent_folder = os.path.dirname(folder_path)
@@ -194,10 +203,6 @@ def display_folders(folder_path, search_results=None):
             if row >= 100:
                 break
 
-def natural_sort_key(s):
-    return [int(text) if text.isdigit() else text.lower()
-            for text in re.split('(\d+)', s)]
-
 def display_files(files_or_folder_path):
     media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
     playlist_extensions = ('.xspf',)
@@ -217,8 +222,12 @@ def display_files(files_or_folder_path):
     
     if isinstance(files_or_folder_path, str): 
         folder_path = files_or_folder_path
-        files = os.listdir(folder_path)
-        files.sort(key=natural_sort_key)
+        try:
+            files = os.listdir(folder_path)
+            files.sort(key=natural_sort_key)
+        except PermissionError:
+            print(f"Permission denied: {folder_path}")
+            files = []
     else:  
         files = files_or_folder_path
         files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
@@ -266,7 +275,6 @@ def on_root_configure(event):
         save_last_directory()
         
         if not initial_load:
-            # Save paned window position only if window size is larger than 1x1
             if current_window_size[0] > 1 and current_window_size[1] > 1:
                 save_panedwindow_position()
 
