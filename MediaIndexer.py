@@ -1,11 +1,135 @@
+import sys
 import os
 import tkinter as tk
 from tkinter import filedialog
+from tkinter import messagebox
 import tkinter.font as tkFont
 import configparser
 import re
 import tkinter.ttk as ttk
 from ttkthemes import ThemedStyle
+import sqlite3
+import subprocess
+import threading
+import json
+import signal
+import textwrap
+import concurrent.futures
+from PIL import Image, ImageTk
+import tempfile
+from mutagen.mp3 import MP3
+from mutagen.id3 import ID3, APIC, ID3TimeStamp
+from screeninfo import get_monitors
+from io import BytesIO
+import winsound
+import pyttsx3
+
+class TimeoutException(Exception):
+    pass
+
+class Tooltip(tk.Toplevel):
+    def __init__(self, widget, metadata, image=None, image_size=(300, 450), font_size=12):
+        super().__init__(widget)
+        self.withdraw()  # Zunächst verbergen
+        self.overrideredirect(True)
+        self.configure(background='lightyellow')
+        self.widget = widget
+        self.metadata = metadata
+        self.image = image
+        self.image_size = image_size
+
+        # Schriftarten festlegen
+        default_font = tkFont.Font(size=font_size)
+        bold_font = tkFont.Font(size=font_size, weight="bold")
+
+        # Container-Frame erstellen
+        container = tk.Frame(self, bg='lightyellow', padx=10, pady=10, relief='solid', bd=1)
+        container.pack()
+
+        # Maximale Breite des Tooltips
+        self.max_tooltip_width = 400
+
+        # Bild anzeigen, falls verfügbar
+        if self.image:
+            try:
+                image = self.image.resize(self.image_size, Image.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+                image_label = tk.Label(container, image=photo, bg='lightyellow')
+                image_label.image = photo  # Referenz behalten
+                image_label.pack(pady=(0, 10))
+            except Exception as e:
+                print(f"Fehler beim Laden des Bildes: {e}")
+
+        # Metadaten parsen und anzeigen
+        metadata_dict = self.parse_metadata(self.metadata)
+
+        # Schauspielerliste bereinigen
+        if "Schauspieler" in metadata_dict:
+            actors = metadata_dict["Schauspieler"].split(", ")
+            unique_actors = ", ".join(sorted(set(actors), key=actors.index))
+            metadata_dict["Schauspieler"] = unique_actors
+
+        allowed_titles = {"Filmtitel", "Titel", "Jahr", "Kommentar", "Album", "Interpret", "Filmlänge", "Genre", "Schauspieler", "Inhalt"}
+
+        for label, value in metadata_dict.items():
+            if not value:
+                continue
+
+            row_frame = tk.Frame(container, bg='lightyellow')
+            row_frame.pack(anchor='w', fill='x', padx=5, pady=2)
+
+            font = bold_font if label in allowed_titles else default_font
+            label_widget = tk.Label(row_frame, text=label + ":", font=font, bg='lightyellow', anchor='nw')
+            label_widget.pack(side='left', anchor='nw')
+
+            wrap_length = self.max_tooltip_width - 20 if label == "Inhalt" else self.max_tooltip_width - 50
+            value_widget = tk.Label(
+                row_frame,
+                text=value,
+                font=default_font,
+                bg='lightyellow',
+                anchor='nw',
+                wraplength=wrap_length,
+                justify='left'
+            )
+            value_widget.pack(side='left', anchor='nw')
+
+    def parse_metadata(self, metadata_text):
+        metadata_dict = {}
+        for line in metadata_text.splitlines():
+            if ":" in line:
+                label, value = line.split(":", 1)
+                metadata_dict[label.strip()] = value.strip()
+        return metadata_dict
+
+    def show(self, x, y):
+        self.update_idletasks()
+
+        tooltip_width = self.winfo_width()
+        tooltip_height = self.winfo_height()
+
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        preferred_x = x + 20
+        preferred_y = y + 20
+
+        # Tooltip anpassen, wenn er über die Bildschirmränder hinausgeht
+        if preferred_x + tooltip_width > screen_width:
+            preferred_x = x - tooltip_width - 20
+        if preferred_y + tooltip_height > screen_height:
+            preferred_y = y - tooltip_height - 20
+
+        # Sicherstellen, dass der Tooltip nicht außerhalb des Bildschirms erscheint
+        preferred_x = max(0, min(preferred_x, screen_width - tooltip_width))
+        preferred_y = max(0, min(preferred_y, screen_height - tooltip_height))
+
+        self.geometry(f"+{preferred_x}+{preferred_y}")
+        self.deiconify()
+        self.lift()
+
+    def hide(self):
+        self.withdraw()
 
 root = tk.Tk()
 root.title("Media Indexer and Player")
@@ -16,15 +140,186 @@ style.set_theme('arc')
 folder_path = ''
 config = configparser.ConfigParser()
 previous_window_size = None
-initial_load = True
+
+bin_dir = os.path.join(os.getcwd(), 'bin')
+ffmpeg_path = os.path.join(bin_dir, 'ffmpeg.exe')
+ffprobe_path = os.path.join(bin_dir, 'ffprobe.exe')
+
+search_active = False
+current_search_results = []
+
+# Initialisieren der Variablen
+use_db_var = tk.BooleanVar()
+title_search_var = tk.BooleanVar()
+genre_var = tk.BooleanVar()
+actors_var = tk.BooleanVar()
+comment_var = tk.BooleanVar()
+
+title_checkbox = None
+genre_checkbox = None
+actors_checkbox = None
+comment_checkbox = None
+
+settings_window = None
+
+def extract_cover_art(file_path):
+    """Extrahiert Cover-Art aus einer Mediendatei und gibt ein PIL.Image-Objekt zurück.
+    Sucht zunächst nach einem externen Bild im Verzeichnis, bevor es in der Datei sucht.
+    """
+    # Überprüfe, ob ein Bild im Verzeichnis der Datei existiert
+    image_path = get_image_path(file_path)
+    if image_path:
+        try:
+            image = Image.open(image_path)
+            return image
+        except Exception as e:
+            print(f"Fehler beim Laden des Bildes von {image_path}: {e}")
+
+    try:
+        if file_path.lower().endswith('.mp3'):
+            audio = MP3(file_path, ID3=ID3)
+            for tag in audio.tags.values():
+                if isinstance(tag, APIC):
+                    image_data = tag.data
+                    image = Image.open(BytesIO(image_data))
+                    return image
+            print(f"Kein Cover gefunden in {file_path}")
+            return None
+        else:
+            # Verwenden von ffmpeg, um das Cover-Art-Bild im Speicher zu extrahieren
+            probe = ffprobe_file(file_path)
+            streams = probe.get('streams', [])
+            cover_stream_index = None
+            for stream in streams:
+                if stream.get('codec_type') == 'video' and stream.get('disposition', {}).get('attached_pic') == 1:
+                    cover_stream_index = stream['index']
+                    break
+
+            if cover_stream_index is not None:
+                cmd = [
+                    ffmpeg_path, '-i', file_path, '-map', f'0:{cover_stream_index}', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-'
+                ]
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                image_data = result.stdout
+                if image_data:
+                    image = Image.open(BytesIO(image_data))
+                    return image
+                else:
+                    print(f"Fehler beim Extrahieren des Covers aus {file_path}")
+                    return None
+            else:
+                print(f"Kein angehängtes Bild gefunden in {file_path}")
+                return None
+    except Exception as e:
+        print(f"Ausnahme beim Extrahieren der Cover-Art: {e}")
+        return None
+
+
+def on_enter(event, path, widget):
+    x_root, y_root = event.x_root, event.y_root
+    # Zeitverzögerung für das Anzeigen des Tooltips
+    def show_tooltip_after_delay():
+        # Überprüfen, ob der Mauszeiger noch über dem Widget ist
+        if widget == widget.winfo_containing(event.x_root, event.y_root):
+            show_tooltip(x_root, y_root, path, widget)
+    widget.tooltip_after_id = widget.after(500, show_tooltip_after_delay)
+
+def on_leave(event, widget):
+    if hasattr(widget, "tooltip_after_id"):
+        widget.after_cancel(widget.tooltip_after_id)
+        del widget.tooltip_after_id
+
+    if hasattr(widget, "tooltip"):
+        widget.tooltip.hide()
+        del widget.tooltip
+
+def on_motion(event, path, widget):
+    if hasattr(widget, "tooltip"):
+        x_root, y_root = event.x_root, event.y_root
+        widget.tooltip.show(x_root, y_root)
+
+def show_tooltip(x_root, y_root, path, widget):
+    # Extrahiere das Cover-Art-Bild
+    image = extract_cover_art(path)
+    # Hole die Metadaten
+    metadata = get_metadata_info(path)
+    # Tooltip erstellen und anzeigen
+    tooltip = Tooltip(widget, metadata, image=image)
+    widget.tooltip = tooltip
+    tooltip.show(x_root, y_root)
+
+def bind_tooltip(widget, path):
+    widget.bind("<Enter>", lambda event: on_enter(event, path, widget))
+    widget.bind("<Leave>", lambda event: on_leave(event, widget))
+    widget.bind("<Motion>", lambda event: on_motion(event, path, widget))
+
+def get_monitor_containing(x, y):
+    monitors = get_monitors()
+    for monitor in monitors:
+        if monitor.x <= x < monitor.x + monitor.width and monitor.y <= y < monitor.y + monitor.height:
+            return monitor
+    # Falls kein Monitor gefunden wurde, geben Sie den primären Monitor zurück
+    return monitors[0]
+
+def ffprobe_file(file_path):
+    """Run ffprobe to get metadata as JSON and handle errors."""
+    try:
+        # Call ffprobe to get metadata
+        result = subprocess.run(
+            [ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW  # Prevent cmd window from showing on Windows
+        )
+        metadata = json.loads(result.stdout)
+        return metadata
+    except Exception as e:
+        print(f"ffprobe error: {e}")
+        return {}  # Return empty dict on failure
+
+def get_mp3_metadata_with_timeout(file_path, timeout=5):
+    def fetch_metadata():
+        try:
+            audio = MP3(file_path, ID3=ID3)
+            tags = audio.tags
+
+            if tags is None:
+                print(f"No ID3 tags found in {file_path}")
+                return '', '', '', '', '', ''
+
+            album = tags.get("TALB").text[0] if tags.get("TALB") else ''
+            track_number = tags.get("TRCK").text[0] if tags.get("TRCK") else ''
+            year = str(tags.get("TDRC").text[0]) if tags.get("TDRC") else ''
+            genre = tags.get("TCON").text[0] if tags.get("TCON") else ''
+            contributors = tags.get("TPE1").text[0] if tags.get("TPE1") else ''
+            length = f"{round(audio.info.length / 60, 2)} min"
+            return album, track_number, year, genre, contributors, length
+        except Exception as e:
+            print(f"Error extracting MP3 metadata from {file_path}: {e}")
+            return '', '', '', '', '', ''
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(fetch_metadata)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            print(f"Datei '{file_path}' überschritt den Zeitrahmen und wird übersprungen.")
+            return '', '', '', '', '', ''
+
 
 def on_mousewheel(event):
-    media_canvas.yview_scroll(int((event.delta / 120)), "units")
+    media_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 def update_display():
-    if folder_path:
-        root.after(100, lambda: display_folders(folder_path))
-        root.after(100, lambda: display_files(folder_path))
+    # Hier wird nur die Anzeige aktualisiert, wenn bereits ein Verzeichnis vorhanden ist.
+    if folder_path:  # Überprüfen, ob ein Verzeichnis geladen ist
+        display_folders(folder_path)  # Zeige Ordner an
+        display_files(folder_path)    # Zeige Dateien im Ordner an
+
 
 def create_default_config(config_file_path):
     default_config = configparser.ConfigParser()
@@ -59,9 +354,6 @@ def on_sash_move(*args):
     position = paned_window.sashpos(0)
     save_panedwindow_position(position)
 
-def print_config_file_contents():
-    with open('MediaIndexer.cfg', 'r') as configfile:
-        print(configfile.read())
 
 def set_paned_position():
     paned_position = load_panedwindow_position()
@@ -95,28 +387,22 @@ def load_last_directory():
             root.geometry(window_size)
             update_display()
 
-            # Load paned window position only if window size is larger than 1x1
             window_width, window_height = [int(x) for x in window_size.split('x')]
-            if window_width > 1 and window_height > 1:
-                if 'PanedWindow' in config and 'position' in config['PanedWindow']:
-                    paned_position = load_panedwindow_position()
-                    root.after(1000, lambda: paned_window.sashpos(0, paned_position))
-                else:
-                    print("PanedWindow section not found in config")
+            if 'PanedWindow' in config and 'position' in config['PanedWindow']:
+                paned_position = load_panedwindow_position()
+                root.after(1000, lambda: paned_window.sashpos(0, paned_position))
+            else:
+                print("PanedWindow section not found in config")
     except Exception as e:
         print(f"Error loading last directory: {e}")
 
 def open_folder():
-    global folder_path
+    global folder_path, search_active
     folder_path = filedialog.askdirectory()
     if folder_path:
+        search_active = False  # Suche ist nicht mehr aktiv
         save_last_directory(folder_path)
         update_display()
-
-def calculate_columns(window_width, button_width):
-    padding = 10
-    scrollbar_width = 20  # Add an approximate scrollbar width
-    return max(1, (window_width - padding - scrollbar_width) // (button_width + padding))
 
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower()
@@ -141,28 +427,53 @@ def search_files_recursive(path, media_extensions, playlist_extensions, search_r
 
 def perform_search():
     search_term = search_entry.get()
+
     if folder_path and search_term:
         media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
-        playlist_extensions = ('.xspf',)
         search_results = []
 
-        # Bereinige vorherige Ergebnisse aus den Frames
-        for widget in folder_frame.winfo_children():
-            widget.destroy()
-        for widget in media_frame.winfo_children():
-            widget.destroy()
+        # Prüfen, ob die Datenbank verwendet werden soll
+        if use_db_var and use_db_var.get():  # Sicherstellen, dass use_db_var definiert ist
+            conn = sqlite3.connect('media_index.db')
+            cursor = conn.cursor()
 
-        # Aktualisiere Frames nach dem Löschen
-        folder_frame.update_idletasks()
-        media_frame.update_idletasks()
+            # Erstelle die SQL-Abfrage basierend auf den aktivierten Checkboxen
+            query = "SELECT filepath FROM media_files WHERE filepath LIKE ? AND (1=0"  # Suche rekursiv im aktuellen Verzeichnis
+            params = [f"{folder_path}%"]
 
-        # Führe die Suche durch
-        search_files_recursive(folder_path, media_extensions, playlist_extensions, search_results)
-        search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
+            # Füge die Bedingung für die Titelsuche hinzu
+            if title_search_var.get():
+                query += " OR filename LIKE ?"
+                params.append(f"%{search_term}%")
+
+            # Füge zusätzliche Filter für Genre, Schauspieler und Kommentar hinzu
+            if genre_var.get():
+                query += " OR genre LIKE ?"
+                params.append(f"%{search_term}%")
+            if actors_var.get():
+                query += " OR actors LIKE ?"
+                params.append(f"%{search_term}%")
+            if comment_var.get():
+                query += " OR comment LIKE ?"
+                params.append(f"%{search_term}%")
+
+            cursor.execute(query + ")", params)
+            search_results = [row[0] for row in cursor.fetchall()]
+
+            conn.close()
+        else:  # Normale Dateisuche ohne Datenbank
+            search_files_recursive(folder_path, media_extensions, (), search_results)
+            search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
+
+        # Ergebnisse anzeigen
         display_folders(folder_path, search_results)
         display_files(search_results)
 
-
+        # Suchzustand aktualisieren
+        global search_active, current_search_results
+        search_active = True
+        current_search_results = search_results.copy()
+        
 def display_folders(folder_path, search_results=None):
     # Sicherstellen, dass alle Widgets zerstört werden, bevor neue erstellt werden
     for widget in folder_frame.winfo_children():
@@ -172,8 +483,10 @@ def display_folders(folder_path, search_results=None):
     window_width = root.winfo_width()
 
     button_width = 170
+    num_columns = calculate_columns(window_width, button_width)  # Berechnung korrigiert
 
-    num_columns = calculate_columns(window_width, button_width)
+    # Die Anzahl der Zeilen und Spalten konfigurieren, um sicherzustellen, dass sie sich gleichmäßig verteilen
+    folder_frame.columnconfigure(tuple(range(num_columns)), weight=1)  # Alle Spalten gleichmäßig verteilen
 
     row, column = 0, 0
 
@@ -189,8 +502,8 @@ def display_folders(folder_path, search_results=None):
     # Folder Up Button
     parent_folder = os.path.dirname(folder_path)
     if parent_folder and search_results is None:
-        folder_up_button = tk.Button(folder_frame, text="Folder Up", bg='green', fg='white', width=20, height=2, wraplength=150, command=lambda: (display_folders(parent_folder), display_files(parent_folder)))
-        folder_up_button.grid(row=row, column=column, padx=10, pady=5)
+        folder_up_button = tk.Button(folder_frame, text="Folder Up", bg='green', fg='white', width=20, height=2, wraplength=150, command=lambda: navigate_to_folder(parent_folder))
+        folder_up_button.grid(row=row, column=column, padx=10, pady=5, sticky='nsew')  # sticky='nsew' verwenden
 
         default_font = folder_up_button.cget("font")
         new_font = tkFont.Font(font=default_font)
@@ -203,8 +516,8 @@ def display_folders(folder_path, search_results=None):
             column = 0
 
     for folder in folders:
-        folder_button = tk.Button(folder_frame, text=folder, width=20, height=2, wraplength=150, command=lambda path=os.path.join(folder_path, folder): (display_folders(path), display_files(path)))
-        folder_button.grid(row=row, column=column, padx=10, pady=5)
+        folder_button = tk.Button(folder_frame, text=folder, width=20, height=2, wraplength=150, command=lambda path=os.path.join(folder_path, folder): navigate_to_folder(path))
+        folder_button.grid(row=row, column=column, padx=10, pady=5, sticky='nsew')  # sticky='nsew' verwenden
 
         default_font = folder_button.cget("font")
         new_font = tkFont.Font(font=default_font)
@@ -218,6 +531,20 @@ def display_folders(folder_path, search_results=None):
             if row >= 100:
                 break
 
+def navigate_to_folder(path):
+    global folder_path, search_active, current_search_results
+    folder_path = path
+    search_active = False  # Setze den Suchzustand zurück
+    current_search_results = []  # Lösche die Suchergebnisse
+    display_folders(path)
+    display_files(path)
+
+def calculate_columns(window_width, button_width):
+    padding = 20
+    scrollbar_width = 20  # Add an approximate scrollbar width
+    return max(1, (window_width - padding - scrollbar_width) // (button_width + padding))
+
+
 def display_files(files_or_folder_path):
     media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
     playlist_extensions = ('.xspf',)
@@ -230,9 +557,7 @@ def display_files(files_or_folder_path):
     media_frame.update_idletasks()  # Aktualisieren, um sicherzustellen, dass die Widgets zerstört wurden
 
     window_width = root.winfo_width()
-
     button_width = 170
-
     num_columns = calculate_columns(window_width - media_scrollbar.winfo_width(), button_width)
 
     row, column = 0, 0
@@ -261,15 +586,18 @@ def display_files(files_or_folder_path):
             file_name, file_ext = os.path.splitext(file)
 
             media_box = tk.Button(media_frame, text=file_name, width=20, height=2, wraplength=150, command=lambda path=file_path: os.startfile(path))
-            media_box.grid(row=row, column=column, padx=10, pady=5)
+            media_box.grid(row=row, column=column, padx=5, pady=5)
 
             default_font = media_box.cget("font")
             new_font = tkFont.Font(font=default_font)
-            new_font.config(size=int(new_font['size'] * 1.2), weight='bold')
+            new_font.config(size=int(new_font['size'] * 1.3), weight='bold')
             media_box.config(font=new_font)
 
             if file_ext.lower() in playlist_extensions:
                 media_box.config(bg='yellow')
+
+            # Tooltip-Ereignisse binden
+            bind_tooltip(media_box, file_path)
 
             column += 1
             if column >= num_columns:
@@ -284,20 +612,299 @@ def display_files(files_or_folder_path):
         media_frame.config(width=media_frame_width, height=(row + 1) * (media_box.winfo_reqheight() + 10))
         media_canvas.configure(scrollregion=media_canvas.bbox('all'))
 
+def get_image_path(file_path):
+    base_name = os.path.splitext(file_path)[0]
+    image_extensions = ['.png', '.jpg', '.jpeg']
+    for ext in image_extensions:
+        image_path = base_name + ext
+        if os.path.exists(image_path):
+            return image_path
+    return None
+
+def get_media_duration(file_path):
+    """Extract the duration of a video silently using ffprobe."""
+    try:
+        result = subprocess.run(
+            [ffprobe_path, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW  # Hide ffprobe window
+        )
+        # Handle errors in case the duration can't be extracted
+        duration_output = result.stdout.strip()
+        duration = float(duration_output)
+        return f"{int(duration // 60)} min"
+    except (ValueError, subprocess.CalledProcessError) as e:
+        print(f"Error extracting video length: {e}")
+        return None
+           
+def get_metadata_info(file_path):
+    """Strukturierte Darstellung der Metadaten je nach Dateityp."""
+    try:
+        if file_path.lower().endswith('.mp3'):
+            # MP3 Metadaten holen
+            album, track_number, year, genre, contributors, length = get_mp3_metadata_with_timeout(file_path)
+            metadata = f"Titel: {track_number}\nInterpret: {contributors}\nAlbum: {album}\nJahr: {year}"
+        else:
+            # Andere Formate: Metadaten für Videos etc. (einschließlich Jahr)
+            genre, actors, comment, year = get_media_metadata_hidden(file_path)  # 'year' abholen
+            file_name = os.path.basename(file_path)
+            length = get_media_duration(file_path) or "Unbekannt"
+
+            indent = ' ' * 13  # Für Einzug der nachfolgenden Zeilen
+            comment_wrapped = textwrap.fill(comment, width=100, subsequent_indent=indent)
+            actors_wrapped = textwrap.fill(actors, width=100, subsequent_indent=indent)
+            metadata = f"Filmtitel: {file_name}\nJahr: {year}\nSchauspieler: {actors_wrapped}\nFilmlänge: {length}\n\nInhalt: {comment_wrapped}"
+        return metadata
+    except Exception as e:
+        print(f"Fehler beim Abrufen der Metadaten für {file_path}: {e}")
+        return "Keine Metadaten verfügbar"
 
 def on_root_configure(event):
-    global previous_window_size, initial_load
+    global previous_window_size
+
+    # Prüfen, ob sich die Fenstergröße geändert hat
     current_window_size = (root.winfo_width(), root.winfo_height())
     
-    if folder_path and (previous_window_size is None or previous_window_size != current_window_size):
-        root.after(2000, update_display)
+    if previous_window_size != current_window_size:
         previous_window_size = current_window_size
-        save_last_directory()
-        
-        if not initial_load:
-            if current_window_size[0] > 1 and current_window_size[1] > 1:
-                save_panedwindow_position()
+        # Nur die UI (Ordner- und Dateiansicht) aktualisieren, ohne das Verzeichnis zu wechseln
+        root.after(100, lambda: refresh_ui())  # Aktualisiere nur die UI
 
+
+def refresh_ui():
+    # Hier wird nur die UI aktualisiert, ohne das Verzeichnis neu zu laden
+    if folder_path:  # Überprüfen, ob ein Verzeichnis geladen ist
+        if search_active:
+            # Wenn eine Suche aktiv ist, zeige die aktuellen Suchergebnisse erneut an
+            display_folders(folder_path, current_search_results)
+            display_files(current_search_results)
+        else:
+            display_folders(folder_path)
+            display_files(folder_path)
+
+def create_or_reset_db():
+    db_path = 'media_index.db'
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        print("Datenbank gelöscht.")
+
+    # Erstelle die Datenbank neu
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Erstelle die Tabelle media_files mit den erweiterten Feldern für MP3-Dateien
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS media_files (
+            id INTEGER PRIMARY KEY,
+            filename TEXT,
+            filepath TEXT,
+            album TEXT,
+            track_number TEXT,
+            year TEXT,
+            genre TEXT,
+            length TEXT,
+            contributors TEXT,
+            actors TEXT,
+            comment TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("Datenbank neu erstellt.")
+
+def train_db_with_progress():
+    # Neues Fenster für den Fortschritt
+    progress_window = tk.Toplevel(root)
+    progress_window.title("Suche mit ffprobe")
+    progress_window.geometry("400x150")
+
+    progress_label = tk.Label(progress_window, text="Suche läuft...")
+    progress_label.pack(pady=10)
+
+    progress_bar = ttk.Progressbar(progress_window, orient='horizontal', mode='determinate', length=350)
+    progress_bar.pack(pady=10)
+
+    file_progress_label = tk.Label(progress_window, text="")
+    file_progress_label.pack(pady=5)
+
+    total_scanned = 0
+    new_files_count = 0
+    updated_files_count = 0
+
+    def update_progress(current, total, filename):
+        progress_bar['value'] = (current / total) * 100
+        file_progress_label.config(text=f"({current}/{total}) - {filename}")
+        root.update_idletasks()  # Sicherstellen, dass die GUI flüssig aktualisiert wird
+
+    # Funktion, die die Dateien überprüft und die Datenbank aktualisiert
+    def run_ffprobe():
+        nonlocal total_scanned, new_files_count, updated_files_count
+
+        media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.mov')
+        media_files = []
+        batch_size = 100
+
+        total_files = sum([len(files) for r, d, files in os.walk(folder_path) if any(f.lower().endswith(media_extensions) for f in files)])
+        current_file_count = 0
+
+        conn = sqlite3.connect('media_index.db')
+        cursor = conn.cursor()
+
+        for root_dir, _, files in os.walk(folder_path):
+            for file in files:
+                if file.lower().endswith(media_extensions):
+                    file_path = os.path.join(root_dir, file)
+
+                    cursor.execute("SELECT COUNT(*) FROM media_files WHERE filepath = ?", (file_path,))
+                    if cursor.fetchone()[0] > 0:
+                        updated_files_count += 1
+                        continue
+
+                    try:
+                        if file.lower().endswith('.mp3'):
+                            album, track_number, year, genre, contributors, length = get_mp3_metadata_with_timeout(file_path)
+                            media_files.append((file, file_path, album, track_number, year, genre, length, contributors, '', ''))
+                        else:
+                            genre, actors, comment, year = get_media_metadata_hidden(file_path)
+                            media_files.append((file, file_path, '', '', year or '', genre or '', '', '', actors or '', comment or ''))
+
+                        current_file_count += 1
+                        total_scanned += 1
+                        new_files_count += 1
+                        update_progress(current_file_count, total_files, file)
+
+                        if len(media_files) >= batch_size:
+                            cursor.executemany('''
+                                INSERT INTO media_files (filename, filepath, album, track_number, year, genre, length, contributors, actors, comment)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', media_files)
+                            conn.commit()
+                            media_files = []
+
+                    except Exception as e:
+                        print(f"Error processing file {file_path}: {e}")
+                        continue
+
+        if media_files:
+            try:
+                cursor.executemany('''
+                    INSERT INTO media_files (filename, filepath, album, track_number, year, genre, length, contributors, actors, comment)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', media_files)
+                conn.commit()
+            except sqlite3.ProgrammingError as e:
+                print(f"Error inserting data into database: {e}")
+
+        conn.close()
+        root.after(0, progress_window.destroy)
+
+        # Akustisches Signal und TTS-Nachricht
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        play_tts_message()
+
+        # Das Hauptfenster in den Vordergrund bringen und den Fokus erzwingen
+        root.lift()
+        root.focus_force()
+
+        # Zeige die Scan-Zusammenfassung an
+        summary_message = (
+            f"Scan abgeschlossen!\n\n"
+            f"Gesamte Dateien gescannt: {total_scanned}\n"
+            f"Neue Dateien hinzugefügt: {new_files_count}\n"
+            f"Dateien mit geänderten Metadaten: {updated_files_count}"
+        )
+        messagebox.showinfo("Scan-Zusammenfassung", summary_message)
+
+    # Startet den Training-Thread
+    threading.Thread(target=run_ffprobe).start()
+
+def play_tts_message():
+    try:
+        engine = pyttsx3.init()
+        engine.say("Database training is complete!")
+        engine.runAndWait()
+    except Exception as e:
+        print(f"Text-to-Speech error: {e}")
+
+    
+def get_media_metadata_hidden(file_path):
+    """Extracts specific metadata fields from a media file using ffprobe_file's output."""
+    metadata = ffprobe_file(file_path)  # Use ffprobe_file directly to get all metadata
+    format_info = metadata.get('format', {})
+
+    # Extract specific fields
+    genre = format_info.get('tags', {}).get('genre', '')  
+    actors = format_info.get('tags', {}).get('artist', '')  
+    comment = format_info.get('tags', {}).get('comment', '')
+    year = format_info.get('tags', {}).get('date', '')  # 'date' field as year
+
+        # Debugging-Ausgabe für Metadaten
+    print(f"Extracted metadata for {file_path}: genre={genre}, actors={actors}, comment={comment}, year={year}")
+
+    return genre, actors, comment, year  # 'year' aus dem 'date'-Tag zurückgeben
+
+def toggle_search_options():
+    state = tk.NORMAL if use_db_var.get() else tk.DISABLED
+    title_checkbox.config(state=state)
+    genre_checkbox.config(state=state)
+    actors_checkbox.config(state=state)
+    comment_checkbox.config(state=state)
+
+def open_settings():
+    global settings_window, title_checkbox, genre_checkbox, actors_checkbox, comment_checkbox  # Checkbuttons global
+
+    # Überprüfen, ob das Fenster bereits existiert und sichtbar ist
+    if settings_window and settings_window.winfo_exists():
+        settings_window.lift()  # Bringe das Fenster in den Vordergrund
+        settings_window.focus_force()  # Fokussiere das Fenster
+        return
+
+    settings_window = tk.Toplevel(root)
+    settings_window.title("Benutzer Einstellungen")
+    settings_window.geometry("400x400")
+
+    # Button zum Erstellen / Zurücksetzen der SQL-Datenbank
+    tk.Button(settings_window, text="Erstelle / Reset SQL-Lite Datenbank", command=create_or_reset_db).pack(pady=10)
+
+    # Button zum Trainieren der SQL-Datenbank (mit Fortschritt)
+    tk.Button(settings_window, text="Trainiere Datenbank", command=train_db_with_progress).pack(pady=10)
+
+    # Checkbox zum Verwenden der SQL-Datenbank bei der Suche
+    use_db_checkbox = tk.Checkbutton(settings_window, text="Benutze SQL-Datenbank bei der Suche", variable=use_db_var, command=toggle_search_options)
+    use_db_checkbox.pack(pady=10)
+
+    # Checkbox für die Titelsuche
+    title_checkbox = tk.Checkbutton(settings_window, text="Titelsuche", variable=title_search_var, state=tk.DISABLED)
+    title_checkbox.pack(pady=5)
+
+    # Weitere Suchoptionen: Genre, Schauspieler und Kommentar
+    genre_checkbox = tk.Checkbutton(settings_window, text="Metatag Genre der Datei", variable=genre_var, state=tk.DISABLED)
+    actors_checkbox = tk.Checkbutton(settings_window, text="Metatag Schauspieler der Datei", variable=actors_var, state=tk.DISABLED)
+    comment_checkbox = tk.Checkbutton(settings_window, text="Metatag 'comment' der Datei", variable=comment_var, state=tk.DISABLED)
+
+    genre_checkbox.pack(pady=5)
+    actors_checkbox.pack(pady=5)
+    comment_checkbox.pack(pady=5)
+
+    # Checkbox-Optionen gemäß geladenen Einstellungen setzen
+    toggle_search_options()
+
+    # Button zum Speichern der Einstellungen
+    save_button = tk.Button(settings_window, text="Speichern", command=save_settings)
+    save_button.pack(pady=10)
+
+    # Schließen-Button hinzufügen
+    close_button = tk.Button(settings_window, text="Schließen", command=lambda: on_close_settings(settings_window))
+    close_button.pack(pady=10)
+
+    load_settings()  # Lade gespeicherte Einstellungen beim Öffnen des Fensters
+
+def on_close_settings(window):
+    global settings_window
+    settings_window = None
+    window.destroy()
+
+    
 def on_keypress(event):
     if event.keysym == 'Return':
         perform_search()
@@ -311,6 +918,26 @@ def on_closing():
     save_last_directory()
     root.destroy()
 
+def save_settings():
+    config['Settings'] = {
+        'use_database': str(use_db_var.get()),
+        'use_title_search': str(title_search_var.get()),  # Speichere Titelsuche
+        'use_genre': str(genre_var.get()),
+        'use_actors': str(actors_var.get()),
+        'use_comment': str(comment_var.get())
+    }
+
+    with open('MediaIndexer.cfg', 'w') as configfile:
+        config.write(configfile)
+    print("Einstellungen gespeichert")
+
+def load_settings():
+    if 'Settings' in config:
+        use_db_var.set(config.getboolean('Settings', 'use_database', fallback=False))
+        title_search_var.set(config.getboolean('Settings', 'use_title_search', fallback=False))  # Lade Titelsuche
+        genre_var.set(config.getboolean('Settings', 'use_genre', fallback=False))
+        actors_var.set(config.getboolean('Settings', 'use_actors', fallback=False))
+        comment_var.set(config.getboolean('Settings', 'use_comment', fallback=False))
 
 root.title("Media Indexer and Player")
 
@@ -322,6 +949,7 @@ frame.pack(fill='x')
 frame.columnconfigure(0, weight=1)
 frame.columnconfigure(1, weight=1)
 frame.columnconfigure(2, weight=1)
+frame.columnconfigure(3, weight=1)  # Falls Sie den Settings-Button hinzufügen
 
 open_button = tk.Button(frame, text="Open folder", command=open_folder)
 open_button.grid(row=0, column=0, padx=5, pady=5)
@@ -333,15 +961,36 @@ search_entry.bind('<Key>', on_keypress)
 search_button = tk.Button(frame, text="Search", command=perform_search)
 search_button.grid(row=0, column=2, padx=5, pady=5)
 
+settings_button = tk.Button(frame, text="Benutzer Einstellungen", command=open_settings)
+settings_button.grid(row=0, column=3, padx=5, pady=5)
+
 paned_window = ttk.Panedwindow(root, orient=tk.VERTICAL)
 paned_window.pack(expand=True, fill='both')
 
 s = ttk.Style()
 s.configure("TPanedwindow", background='grey', sashthickness=5)
 
-folder_frame = tk.Frame(paned_window)
-paned_window.add(folder_frame, weight=1)
+# Ordneransicht mit Canvas und Scrollbar (oben)
+folder_outer_frame = tk.Frame(paned_window)
+paned_window.add(folder_outer_frame, weight=1)
 
+folder_canvas = tk.Canvas(folder_outer_frame)
+folder_canvas.pack(side='left', expand=True, fill='both')
+
+folder_scrollbar = tk.Scrollbar(folder_outer_frame, orient='vertical', command=folder_canvas.yview)
+folder_scrollbar.pack(side='right', fill='y')
+folder_canvas.configure(yscrollcommand=folder_scrollbar.set)
+
+folder_frame = tk.Frame(folder_canvas)
+folder_canvas.create_window((0, 0), window=folder_frame, anchor='nw')
+
+# Scrollregion aktualisieren für Ordneransicht
+def update_folder_scrollregion(event):
+    folder_canvas.configure(scrollregion=folder_canvas.bbox('all'))
+
+folder_frame.bind("<Configure>", update_folder_scrollregion)
+
+# Medienansicht mit Canvas und Scrollbar (unten)
 media_outer_frame = tk.Frame(paned_window)
 paned_window.add(media_outer_frame, weight=1)
 
@@ -354,25 +1003,35 @@ media_canvas.configure(yscrollcommand=media_scrollbar.set)
 
 media_frame = tk.Frame(media_canvas)
 media_canvas.create_window((0, 0), window=media_frame, anchor='nw')
-media_canvas.configure(scrollregion=media_canvas.bbox('all'))
 
-media_canvas.bind_all("<MouseWheel>", on_mousewheel)
+# Entfernen der initialen scrollregion-Konfiguration
+# media_canvas.configure(scrollregion=media_canvas.bbox('all')
+
+# Scrollregionen aktualisieren
+def update_media_scrollregion(event):
+    media_canvas.configure(scrollregion=media_canvas.bbox('all'))
+
+media_frame.bind("<Configure>", update_media_scrollregion)
+
+# Scrollen mit der Maus für Ordner- und Medienbereich
+folder_canvas.bind("<Enter>", lambda _: folder_canvas.bind_all("<MouseWheel>", lambda event: folder_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")))
+folder_canvas.bind("<Leave>", lambda _: folder_canvas.unbind_all("<MouseWheel>"))
+
+media_canvas.bind("<Enter>", lambda _: media_canvas.bind_all("<MouseWheel>", lambda event: media_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")))
+media_canvas.bind("<Leave>", lambda _: media_canvas.unbind_all("<MouseWheel>"))
 
 load_last_directory()
+# Laden der Einstellungen
+load_settings()
 
 if __name__ == '__main__':
-    style = ttk.Style()
     style.configure("TSizegrip", relief='flat')
 
-    bottom_frame = tk.Frame(root)
-    bottom_frame.pack(side='bottom', fill='x')
-
-    root.sizegrip = ttk.Sizegrip(bottom_frame, style="TSizegrip")
-    root.sizegrip.grid(row=0, column=0, sticky='se')
+    # Platzieren des TSizegrip unten rechts
+    root.sizegrip = ttk.Sizegrip(root, style="TSizegrip")
+    root.sizegrip.pack(side='right', anchor='se')
 
     root.after(100, update_display)
-    root.after(100, lambda: display_folders(folder_path))
-    root.after(100, lambda: display_files(folder_path))
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
