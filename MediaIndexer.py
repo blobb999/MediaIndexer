@@ -1,28 +1,39 @@
-import sys
+# Standard
 import os
-import tkinter as tk
-from tkinter import filedialog
-from tkinter import messagebox
-import tkinter.font as tkFont
-import configparser
+import sys
 import re
-import tkinter.ttk as ttk
-from ttkthemes import ThemedStyle
-import sqlite3
-import subprocess
-import threading
 import json
 import signal
+import shutil
+import threading
+import subprocess
+import configparser
 import textwrap
-import concurrent.futures
-from PIL import Image, ImageTk
 import tempfile
+import urllib.request
+import zipfile
+from io import BytesIO
+import concurrent.futures
+import sqlite3
+
+# Extern
+from PIL import Image, ImageTk
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, ID3TimeStamp
 from screeninfo import get_monitors
-from io import BytesIO
 import winsound
 import pyttsx3
+from ttkthemes import ThemedStyle
+
+# Tkinter
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import tkinter.font as tkFont
+import tkinter.ttk as ttk
+
+bin_dir = os.path.join(os.getcwd(), "bin")
+if not os.path.exists(bin_dir):
+    os.makedirs(bin_dir)
 
 class TimeoutException(Exception):
     pass
@@ -161,6 +172,91 @@ actors_checkbox = None
 comment_checkbox = None
 
 settings_window = None
+
+def check_ffmpeg_and_ffprobe():
+    def show_ffmpeg_error():
+        def open_ffmpeg_download(event):
+            import webbrowser
+            webbrowser.open_new("https://ffmpeg.org/download.html")
+
+        def download_and_install_ffmpeg():
+            url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+            download_path = os.path.join(os.getcwd(), "ffmpeg-release-essentials.zip")
+            install_path = os.path.join(os.getcwd(), "ffmpeg")
+
+            try:
+                # Download ffmpeg
+                urllib.request.urlretrieve(url, download_path)
+
+                # Extract the zip file
+                with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                    zip_ref.extractall(install_path)
+
+                # Locate the ffmpeg and ffprobe binaries
+                ffmpeg_bin_path = None
+                for root, dirs, files in os.walk(install_path):
+                    if 'ffmpeg.exe' in files and 'ffprobe.exe' in files:
+                        ffmpeg_bin_path = root
+                        break
+
+                if ffmpeg_bin_path:
+                    # Move the binaries to the bin directory
+                    shutil.move(os.path.join(ffmpeg_bin_path, 'ffmpeg.exe'), os.path.join(bin_dir, 'ffmpeg.exe'))
+                    shutil.move(os.path.join(ffmpeg_bin_path, 'ffprobe.exe'), os.path.join(bin_dir, 'ffprobe.exe'))
+
+                # Clean up
+                os.remove(download_path)
+                shutil.rmtree(install_path)
+
+                # Restart the program
+                python = sys.executable
+                os.execl(python, python, *sys.argv)
+
+            except Exception as e:
+                messagebox.showerror("Error Downloading FFmpeg", f"An error occurred while downloading and installing FFmpeg:\n{e}")
+
+        error_window = tk.Toplevel(root)
+        error_window.title("FFmpeg Not Found")
+        error_window.geometry("400x150")
+        error_window.transient(root)
+        error_window.grab_set()
+
+        message = tk.Label(error_window, text="FFmpeg and FFprobe are not found or failed to initialize.")
+        message.pack(pady=10)
+
+        link = tk.Label(error_window, text="https://ffmpeg.org/download.html", fg="blue", cursor="hand2")
+        link.pack()
+        link.bind("<Button-1>", open_ffmpeg_download)
+
+        install_button = tk.Button(error_window, text="Download and Install", command=download_and_install_ffmpeg)
+        install_button.pack(pady=10)
+
+        error_window.protocol("WM_DELETE_WINDOW", root.destroy)
+
+        error_window.attributes('-topmost', True)
+        error_window.update()
+        error_window.attributes('-topmost', False)
+
+    try:
+        ffmpeg_path = os.path.join(bin_dir, "ffmpeg.exe")
+        ffprobe_path = os.path.join(bin_dir, "ffprobe.exe")
+
+        if not os.path.exists(ffmpeg_path) or not os.path.exists(ffprobe_path):
+            show_ffmpeg_error()
+            return False
+
+        ffmpeg_result = subprocess.run([ffmpeg_path, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ffprobe_result = subprocess.run([ffprobe_path, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        if ffmpeg_result.returncode != 0 or ffprobe_result.returncode != 0:
+            show_ffmpeg_error()
+            return False
+
+    except FileNotFoundError:
+        show_ffmpeg_error()
+        return False
+
+    return True
 
 def extract_cover_art(file_path):
     """Extrahiert Cover-Art aus einer Mediendatei und gibt ein PIL.Image-Objekt zurück.
@@ -1025,9 +1121,13 @@ load_last_directory()
 load_settings()
 
 if __name__ == '__main__':
+    # Check for ffmpeg and ffprobe after creating the bin directory
+    if not check_ffmpeg_and_ffprobe():
+        sys.exit("FFmpeg and FFprobe are required for the application to run.")
+
     style.configure("TSizegrip", relief='flat')
 
-    # Platzieren des TSizegrip unten rechts
+    # Sizegrip for resizing the window
     root.sizegrip = ttk.Sizegrip(root, style="TSizegrip")
     root.sizegrip.pack(side='right', anchor='se')
 
@@ -1035,3 +1135,4 @@ if __name__ == '__main__':
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
+
