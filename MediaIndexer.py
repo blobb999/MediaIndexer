@@ -161,17 +161,22 @@ ffprobe_path = os.path.join(bin_dir, 'ffprobe.exe')
 search_active = False
 current_search_results = []
 
-# Initialisieren der Variablen
+# Initialisieren der Variablen (neu)
 use_db_var = tk.BooleanVar()
 title_search_var = tk.BooleanVar()
 genre_var = tk.BooleanVar()
 actors_var = tk.BooleanVar()
 comment_var = tk.BooleanVar()
+album_search_var = tk.BooleanVar()
+interpret_search_var = tk.BooleanVar()
 
+# Checkbox-Referenzen initialisieren
 title_checkbox = None
 genre_checkbox = None
 actors_checkbox = None
 comment_checkbox = None
+album_checkbox = None
+interpret_checkbox = None
 
 settings_window = None
 
@@ -528,34 +533,45 @@ def perform_search():
         media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
         search_results = []
 
-        # Prüfen, ob die Datenbank verwendet werden soll
-        if use_db_var and use_db_var.get():
+        if use_db_var.get():
             conn = sqlite3.connect('media_index.db')
             cursor = conn.cursor()
 
-            # Erstelle die SQL-Abfrage basierend auf den aktivierten Checkboxen
+            # Die SQL-Abfrage beginnt mit einer Bedingung, die den Dateipfad einschränkt.
+            # Anschließend werden – je nach aktivierten Checkboxen – die entsprechenden Felder durchsucht.
             query = "SELECT filepath FROM media_files WHERE filepath LIKE ? AND (1=0"
             params = [f"{folder_path}%"]
 
             if title_search_var.get():
-                query += " OR filename LIKE ?"
+                query += " OR filename LIKE ? OR container LIKE ?"
+                params.append(f"%{search_term}%")
                 params.append(f"%{search_term}%")
 
             if genre_var.get():
                 query += " OR genre LIKE ?"
                 params.append(f"%{search_term}%")
+
             if actors_var.get():
                 query += " OR actors LIKE ?"
                 params.append(f"%{search_term}%")
+
             if comment_var.get():
                 query += " OR comment LIKE ?"
                 params.append(f"%{search_term}%")
 
-            cursor.execute(query + ")", params)
-            search_results = [row[0] for row in cursor.fetchall()]
+            if album_search_var.get():
+                query += " OR album LIKE ?"
+                params.append(f"%{search_term}%")
 
+            if interpret_search_var.get():
+                query += " OR contributors LIKE ?"
+                params.append(f"%{search_term}%")
+
+            query += ")"
+            cursor.execute(query, params)
+            search_results = [row[0] for row in cursor.fetchall()]
             conn.close()
-        else:  # Normale Dateisuche ohne Datenbank
+        else:
             search_files_recursive(folder_path, media_extensions, (), search_results)
             search_results = [result for result in search_results if search_term.lower() in os.path.basename(result).lower()]
 
@@ -565,6 +581,7 @@ def perform_search():
         global search_active, current_search_results
         search_active = True
         current_search_results = search_results.copy()
+
         
 def display_folders(folder_path, search_results=None):
     for widget in folder_frame.winfo_children():
@@ -770,6 +787,7 @@ def create_or_reset_db():
             id INTEGER PRIMARY KEY,
             filename TEXT,
             filepath TEXT,
+            container TEXT,
             album TEXT,
             track_number TEXT,
             year TEXT,
@@ -824,7 +842,8 @@ def train_db_with_progress():
             for file in files:
                 if file.lower().endswith(media_extensions):
                     file_path = os.path.join(root_dir, file)
-
+                    parent_folder = os.path.basename(os.path.dirname(file_path))
+                    
                     cursor.execute("SELECT COUNT(*) FROM media_files WHERE filepath = ?", (file_path,))
                     if cursor.fetchone()[0] > 0:
                         updated_files_count += 1
@@ -833,10 +852,10 @@ def train_db_with_progress():
                     try:
                         if file.lower().endswith('.mp3'):
                             album, track_number, year, genre, contributors, length = get_mp3_metadata_with_timeout(file_path)
-                            media_files.append((file, file_path, album, track_number, year, genre, length, contributors, '', ''))
+                            media_files.append((file, file_path, parent_folder, album, track_number, year, genre, length, contributors, '', ''))
                         else:
                             genre, actors, comment, year = get_media_metadata_hidden(file_path)
-                            media_files.append((file, file_path, '', '', year or '', genre or '', '', '', actors or '', comment or ''))
+                            media_files.append((file, file_path, parent_folder, '', '', year or '', genre or '', '', '', actors or '', comment or ''))
 
                         current_file_count += 1
                         total_scanned += 1
@@ -845,8 +864,8 @@ def train_db_with_progress():
 
                         if len(media_files) >= batch_size:
                             cursor.executemany('''
-                                INSERT INTO media_files (filename, filepath, album, track_number, year, genre, length, contributors, actors, comment)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO media_files (filename, filepath, container, album, track_number, year, genre, length, contributors, actors, comment)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''', media_files)
                             conn.commit()
                             media_files = []
@@ -858,8 +877,8 @@ def train_db_with_progress():
         if media_files:
             try:
                 cursor.executemany('''
-                    INSERT INTO media_files (filename, filepath, album, track_number, year, genre, length, contributors, actors, comment)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO media_files (filename, filepath, container, album, track_number, year, genre, length, contributors, actors, comment)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', media_files)
                 conn.commit()
             except sqlite3.ProgrammingError as e:
@@ -882,8 +901,8 @@ def train_db_with_progress():
         )
         messagebox.showinfo("Scan-Zusammenfassung", summary_message)
 
-    # Setze den Thread als Daemon, um sicherzustellen, dass er beim Beenden freigegeben wird.
     threading.Thread(target=run_ffprobe, daemon=True).start()
+
 
 def play_tts_message():
     try:
@@ -912,9 +931,11 @@ def toggle_search_options():
     genre_checkbox.config(state=state)
     actors_checkbox.config(state=state)
     comment_checkbox.config(state=state)
+    album_checkbox.config(state=state)
+    interpret_checkbox.config(state=state)
 
 def open_settings():
-    global settings_window, title_checkbox, genre_checkbox, actors_checkbox, comment_checkbox
+    global settings_window, title_checkbox, genre_checkbox, actors_checkbox, comment_checkbox, album_checkbox, interpret_checkbox
 
     if settings_window and settings_window.winfo_exists():
         settings_window.lift()
@@ -923,7 +944,7 @@ def open_settings():
 
     settings_window = tk.Toplevel(root)
     settings_window.title("Benutzer Einstellungen")
-    settings_window.geometry("400x400")
+    settings_window.geometry("400x500")
 
     tk.Button(settings_window, text="Erstelle / Reset SQL-Lite Datenbank", command=create_or_reset_db).pack(pady=10)
     tk.Button(settings_window, text="Trainiere Datenbank", command=train_db_with_progress).pack(pady=10)
@@ -931,16 +952,23 @@ def open_settings():
     use_db_checkbox = tk.Checkbutton(settings_window, text="Benutze SQL-Datenbank bei der Suche", variable=use_db_var, command=toggle_search_options)
     use_db_checkbox.pack(pady=10)
 
-    title_checkbox = tk.Checkbutton(settings_window, text="Titelsuche", variable=title_search_var, state=tk.DISABLED)
+    title_checkbox = tk.Checkbutton(settings_window, text="Titelsuche (Dateiname/Ordnername)", variable=title_search_var, state=tk.DISABLED)
     title_checkbox.pack(pady=5)
 
     genre_checkbox = tk.Checkbutton(settings_window, text="Metatag Genre der Datei", variable=genre_var, state=tk.DISABLED)
-    actors_checkbox = tk.Checkbutton(settings_window, text="Metatag Schauspieler der Datei", variable=actors_var, state=tk.DISABLED)
-    comment_checkbox = tk.Checkbutton(settings_window, text="Metatag 'comment' der Datei", variable=comment_var, state=tk.DISABLED)
-
     genre_checkbox.pack(pady=5)
+
+    actors_checkbox = tk.Checkbutton(settings_window, text="Metatag Schauspieler der Datei", variable=actors_var, state=tk.DISABLED)
     actors_checkbox.pack(pady=5)
+
+    comment_checkbox = tk.Checkbutton(settings_window, text="Metatag 'comment' der Datei", variable=comment_var, state=tk.DISABLED)
     comment_checkbox.pack(pady=5)
+
+    album_checkbox = tk.Checkbutton(settings_window, text="Metatag Album der Datei", variable=album_search_var, state=tk.DISABLED)
+    album_checkbox.pack(pady=5)
+
+    interpret_checkbox = tk.Checkbutton(settings_window, text="Metatag Interpret der Datei", variable=interpret_search_var, state=tk.DISABLED)
+    interpret_checkbox.pack(pady=5)
 
     toggle_search_options()
 
@@ -951,6 +979,7 @@ def open_settings():
     close_button.pack(pady=10)
 
     load_settings()
+
 
 def on_close_settings(window):
     global settings_window
@@ -974,9 +1003,10 @@ def save_settings():
         'use_title_search': str(title_search_var.get()),
         'use_genre': str(genre_var.get()),
         'use_actors': str(actors_var.get()),
-        'use_comment': str(comment_var.get())
+        'use_comment': str(comment_var.get()),
+        'use_album_search': str(album_search_var.get()),
+        'use_interpret_search': str(interpret_search_var.get())
     }
-
     with open('MediaIndexer.cfg', 'w') as configfile:
         config.write(configfile)
     print("Einstellungen gespeichert")
@@ -988,6 +1018,9 @@ def load_settings():
         genre_var.set(config.getboolean('Settings', 'use_genre', fallback=False))
         actors_var.set(config.getboolean('Settings', 'use_actors', fallback=False))
         comment_var.set(config.getboolean('Settings', 'use_comment', fallback=False))
+        album_search_var.set(config.getboolean('Settings', 'use_album_search', fallback=False))
+        interpret_search_var.set(config.getboolean('Settings', 'use_interpret_search', fallback=False))
+
 
 root.title("Media Indexer and Player")
 root.bind('<Configure>', on_root_configure)
