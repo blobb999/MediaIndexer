@@ -16,7 +16,7 @@ import sqlite3
 # Extern
 from PIL import Image, ImageTk
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, APIC, ID3TimeStamp
+from mutagen.id3 import ID3, APIC
 from screeninfo import get_monitors
 import winsound
 import pyttsx3
@@ -445,9 +445,6 @@ def get_mp3_metadata_with_timeout(file_path, timeout=5):
             print(f"Datei '{file_path}' überschritt den Zeitrahmen und wird übersprungen.")
             return '', '', '', '', '', ''
 
-def on_mousewheel(event):
-    media_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
 def update_display():
     # Hier wird nur die Anzeige aktualisiert, wenn bereits ein Verzeichnis vorhanden ist.
     if folder_path:  # Überprüfen, ob ein Verzeichnis geladen ist
@@ -483,14 +480,6 @@ def load_panedwindow_position():
         print(f"Error loading sash position: {e}")
         return 0
 
-def on_sash_move(*args):
-    position = paned_window.sashpos(0)
-    save_panedwindow_position(position)
-
-def set_paned_position():
-    paned_position = load_panedwindow_position()
-    paned_window.sashpos(0, paned_position)
-
 def save_last_directory(path=None):
     if path:
         config['LastDirectory'] = {'path': path}
@@ -519,7 +508,6 @@ def load_last_directory():
             root.geometry(window_size)
             update_display()
 
-            window_width, window_height = [int(x) for x in window_size.split('x')]
             if 'PanedWindow' in config and 'position' in config['PanedWindow']:
                 paned_position = load_panedwindow_position()
                 root.after(1000, lambda: paned_window.sashpos(0, paned_position))
@@ -705,8 +693,6 @@ def display_files(files_or_folder_path):
     media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.flv', '.mov', '.wmv')
     playlist_extensions = ('.xspf',)
 
-    padding_x = 10
-
     for widget in media_frame.winfo_children():
         if hasattr(widget, "tooltip_after_id"):
             widget.after_cancel(widget.tooltip_after_id)
@@ -875,14 +861,6 @@ def on_root_configure(event):
         previous_window_size = current_size
         # Längere Verzögerung für stabilere Updates
         resize_after_id = root.after(200, refresh_ui)
-
-def on_canvas_configure(event, canvas_type):
-    """Handler für Canvas-Größenänderungen"""
-    # Nur refresh wenn sich die Größe tatsächlich geändert hat
-    if canvas_type == 'folder':
-        folder_canvas.after_idle(lambda: refresh_ui() if folder_path else None)
-    elif canvas_type == 'media':
-        media_canvas.after_idle(lambda: refresh_ui() if folder_path else None)
 
 def bind_scroll_to_canvas(canvas):
     global current_scroll_handler, scroll_active, last_scroll_time
