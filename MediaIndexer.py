@@ -2,13 +2,11 @@ import os
 import sys
 import re
 import json
-import signal
 import shutil
 import threading
 import subprocess
 import configparser
 import textwrap
-import tempfile
 import urllib.request
 import zipfile
 from io import BytesIO
@@ -34,9 +32,6 @@ import tkinter.ttk as ttk
 bin_dir = os.path.join(os.getcwd(), "bin")
 if not os.path.exists(bin_dir):
     os.makedirs(bin_dir)
-
-class TimeoutException(Exception):
-    pass
 
 class Tooltip(tk.Toplevel):
     def __init__(self, widget, metadata, image=None, image_size=(300, 450), font_size=12):
@@ -179,9 +174,9 @@ album_checkbox = None
 interpret_checkbox = None
 
 settings_window = None
-
 resize_after_id = None
 current_scroll_handler = None
+scroll_active = False
 
 def check_ffmpeg_and_ffprobe():
     def show_ffmpeg_error():
@@ -335,11 +330,25 @@ def extract_cover_art(file_path, max_size=(300, 450)):
 
 def on_enter(event, path, widget):
     x_root, y_root = event.x_root, event.y_root
-    # Zeitverzögerung für das Anzeigen des Tooltips
+    global scroll_active
+    if scroll_active:
+        return
     def show_tooltip_after_delay():
-        # Überprüfen, ob der Mauszeiger noch über dem Widget ist
-        if widget == widget.winfo_containing(event.x_root, event.y_root):
-            show_tooltip(x_root, y_root, path, widget)
+        try:
+            # Weniger restriktive Überprüfung - nur prüfen ob Widget noch existiert
+            if widget.winfo_exists():
+                widget_at_pos = widget.winfo_containing(x_root, y_root)
+                # Tooltip zeigen wenn Mouse noch über dem ursprünglichen Widget oder einem Child ist
+                if widget_at_pos == widget or (widget_at_pos and str(widget_at_pos).startswith(str(widget))):
+                    show_tooltip(x_root, y_root, path, widget)
+        except tk.TclError:
+            # Widget wurde bereits zerstört
+            pass
+    
+    # Cancel existing tooltip timer
+    if hasattr(widget, "tooltip_after_id"):
+        widget.after_cancel(widget.tooltip_after_id)
+    
     widget.tooltip_after_id = widget.after(500, show_tooltip_after_delay)
 
 def on_leave(event, widget):
@@ -375,14 +384,6 @@ def bind_tooltip(widget, path):
     widget.bind("<Enter>", lambda event: on_enter(event, path, widget))
     widget.bind("<Leave>", lambda event: on_leave(event, widget))
     widget.bind("<Motion>", lambda event: on_motion(event, path, widget))
-
-def get_monitor_containing(x, y):
-    monitors = get_monitors()
-    for monitor in monitors:
-        if monitor.x <= x < monitor.x + monitor.width and monitor.y <= y < monitor.y + monitor.height:
-            return monitor
-    # Falls kein Monitor gefunden wurde, geben Sie den primären Monitor zurück
-    return monitors[0]
 
 def ffprobe_file(file_path):
     """ffprobe mit besserer Pfad-Behandlung"""
@@ -615,6 +616,15 @@ def perform_search():
         
 def display_folders(folder_path, search_results=None):
     for widget in folder_frame.winfo_children():
+        if hasattr(widget, "tooltip_after_id"):
+            widget.after_cancel(widget.tooltip_after_id)
+            del widget.tooltip_after_id
+        if hasattr(widget, "tooltip"):
+            try:
+                widget.tooltip.destroy()
+            except:
+                pass
+            del widget.tooltip
         widget.destroy()
     folder_frame.update_idletasks()
 
@@ -698,6 +708,15 @@ def display_files(files_or_folder_path):
     padding_x = 10
 
     for widget in media_frame.winfo_children():
+        if hasattr(widget, "tooltip_after_id"):
+            widget.after_cancel(widget.tooltip_after_id)
+            del widget.tooltip_after_id
+        if hasattr(widget, "tooltip"):
+            try:
+                widget.tooltip.destroy()
+            except:
+                pass
+            del widget.tooltip
         widget.destroy()
     media_frame.update_idletasks()
 
@@ -866,15 +885,43 @@ def on_canvas_configure(event, canvas_type):
         media_canvas.after_idle(lambda: refresh_ui() if folder_path else None)
 
 def bind_scroll_to_canvas(canvas):
-    global current_scroll_handler
+    global current_scroll_handler, scroll_active, last_scroll_time
     if current_scroll_handler:
         root.unbind_all("<MouseWheel>")
     
     def scroll_handler(event):
+        global scroll_active, last_scroll_time
+        import time
+        
+        scroll_active = True
+        last_scroll_time = time.time()
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        # Reset scroll_active nach 500ms
+        def reset_scroll():
+            global scroll_active
+            scroll_active = False
+        root.after(500, reset_scroll)
     
     current_scroll_handler = root.bind_all("<MouseWheel>", scroll_handler)
 
+def on_canvas_configure_debounced(event, canvas_type):
+    """Debounced Canvas-Configure Handler"""
+    if not hasattr(root, 'canvas_resize_after_id'):
+        root.canvas_resize_after_id = {}
+    
+    # Cancel previous resize for this canvas
+    if canvas_type in root.canvas_resize_after_id:
+        root.after_cancel(root.canvas_resize_after_id[canvas_type])
+    
+    # Only refresh after 300ms of no canvas changes
+    def delayed_refresh():
+        if folder_path:
+            refresh_ui()
+        if canvas_type in root.canvas_resize_after_id:
+            del root.canvas_resize_after_id[canvas_type]
+    
+    root.canvas_resize_after_id[canvas_type] = root.after(300, delayed_refresh)
 
 def refresh_ui():
     """UI mit korrekter Größenberechnung aktualisieren"""
@@ -1234,11 +1281,11 @@ media_frame.bind("<Configure>", update_media_scrollregion)
 
 folder_canvas.bind("<Enter>", lambda _: bind_scroll_to_canvas(folder_canvas))
 folder_canvas.bind("<Leave>", lambda _: root.unbind_all("<MouseWheel>"))
-folder_canvas.bind('<Configure>', lambda event: on_canvas_configure(event, 'folder'))
+folder_canvas.bind('<Configure>', lambda event: on_canvas_configure_debounced(event, 'folder'))
 
 media_canvas.bind("<Enter>", lambda _: bind_scroll_to_canvas(media_canvas))
 media_canvas.bind("<Leave>", lambda _: root.unbind_all("<MouseWheel>"))
-media_canvas.bind('<Configure>', lambda event: on_canvas_configure(event, 'media'))
+media_canvas.bind('<Configure>', lambda event: on_canvas_configure_debounced(event, 'media'))
 
 load_last_directory()
 load_settings()
