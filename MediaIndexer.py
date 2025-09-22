@@ -180,6 +180,9 @@ interpret_checkbox = None
 
 settings_window = None
 
+resize_after_id = None
+current_scroll_handler = None
+
 def check_ffmpeg_and_ffprobe():
     def show_ffmpeg_error():
         def open_ffmpeg_download(event):
@@ -265,59 +268,67 @@ def check_ffmpeg_and_ffprobe():
 
     return True
 
-def extract_cover_art(file_path):
-    """Extrahiert Cover-Art aus einer Mediendatei und gibt ein PIL.Image-Objekt zurück.
-    Sucht zunächst nach einem externen Bild im Verzeichnis, bevor es in der Datei sucht.
-    """
-    # Überprüfe, ob ein Bild im Verzeichnis der Datei existiert
-    image_path = get_image_path(file_path)
+def extract_cover_art(file_path, max_size=(300, 450)):
+    """Cover-Art Extraktion mit Pfad-Normalisierung"""
+    # Pfad normalisieren
+    normalized_path = os.path.normpath(file_path)
+    
+    # Externe Bilddatei prüfen
+    image_path = get_image_path(normalized_path)
     if image_path:
         try:
-            image = Image.open(image_path)
-            return image
+            with Image.open(image_path) as img:
+                img.thumbnail(max_size, Image.LANCZOS)
+                return img.copy()
         except Exception as e:
-            print(f"Fehler beim Laden des Bildes von {image_path}: {e}")
+            print(f"Fehler beim Laden des Bildes: {e}")
 
     try:
-        if file_path.lower().endswith('.mp3'):
-            audio = MP3(file_path, ID3=ID3)
-            for tag in audio.tags.values():
-                if isinstance(tag, APIC):
-                    image_data = tag.data
-                    image = Image.open(BytesIO(image_data))
-                    return image
-            print(f"Kein Cover gefunden in {file_path}")
+        if normalized_path.lower().endswith('.mp3'):
+            audio = MP3(normalized_path, ID3=ID3)
+            if audio.tags:
+                for tag in audio.tags.values():
+                    if isinstance(tag, APIC):
+                        image_data = tag.data
+                        image = Image.open(BytesIO(image_data))
+                        image.thumbnail(max_size, Image.LANCZOS)
+                        return image
+            print(f"Kein Cover gefunden in {normalized_path}")
             return None
         else:
-            # Verwenden von ffmpeg, um das Cover-Art-Bild im Speicher zu extrahieren
-            probe = ffprobe_file(file_path)
+            # ffprobe mit normalisiertem Pfad
+            probe = ffprobe_file(normalized_path)
             streams = probe.get('streams', [])
             cover_stream_index = None
+            
             for stream in streams:
-                if stream.get('codec_type') == 'video' and stream.get('disposition', {}).get('attached_pic') == 1:
+                if (stream.get('codec_type') == 'video' and 
+                    stream.get('disposition', {}).get('attached_pic') == 1):
                     cover_stream_index = stream['index']
                     break
 
             if cover_stream_index is not None:
                 cmd = [
-                    ffmpeg_path, '-i', file_path, '-map', f'0:{cover_stream_index}', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-'
+                    ffmpeg_path, '-i', normalized_path, 
+                    '-map', f'0:{cover_stream_index}', 
+                    '-f', 'image2pipe', '-vcodec', 'mjpeg', '-'
                 ]
                 result = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
-                image_data = result.stdout
-                if image_data:
-                    image = Image.open(BytesIO(image_data))
+                
+                if result.stdout:
+                    image = Image.open(BytesIO(result.stdout))
+                    image.thumbnail(max_size, Image.LANCZOS)
                     return image
                 else:
-                    print(f"Fehler beim Extrahieren des Covers aus {file_path}")
+                    print(f"Fehler beim Extrahieren des Covers aus {normalized_path}")
                     return None
             else:
-                print(f"Kein angehängtes Bild gefunden in {file_path}")
+                print(f"Kein angehängtes Bild gefunden in {normalized_path}")
                 return None
+                
     except Exception as e:
         print(f"Ausnahme beim Extrahieren der Cover-Art: {e}")
         return None
@@ -347,11 +358,15 @@ def on_motion(event, path, widget):
         widget.tooltip.show(x_root, y_root)
 
 def show_tooltip(x_root, y_root, path, widget):
-    # Extrahiere das Cover-Art-Bild
+    if hasattr(widget, "tooltip"):
+        try:
+            if widget.tooltip.winfo_exists():
+                widget.tooltip.destroy()
+        except:
+            pass
+    
     image = extract_cover_art(path)
-    # Hole die Metadaten
     metadata = get_metadata_info(path)
-    # Tooltip erstellen und anzeigen
     tooltip = Tooltip(widget, metadata, image=image)
     widget.tooltip = tooltip
     tooltip.show(x_root, y_root)
@@ -370,20 +385,35 @@ def get_monitor_containing(x, y):
     return monitors[0]
 
 def ffprobe_file(file_path):
-    """Run ffprobe to get metadata as JSON and handle errors."""
+    """ffprobe mit besserer Pfad-Behandlung"""
     try:
-        # Aufruf von ffprobe mit expliziter Encoding-Angabe und Fehlerbehandlung
+        # Pfad normalisieren
+        normalized_path = os.path.normpath(file_path)
+        
         result = subprocess.run(
-            [ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file_path],
+            [ffprobe_path, '-v', 'quiet', '-print_format', 'json', 
+             '-show_format', '-show_streams', normalized_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding='utf-8', errors='replace',  # <-- Änderung hier
-            creationflags=subprocess.CREATE_NO_WINDOW  # Verhindert das Anzeigen des cmd-Fensters unter Windows
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
+        
+        if result.returncode != 0:
+            print(f"ffprobe Fehler für {normalized_path}: {result.stderr}")
+            return {}
+            
+        if not result.stdout.strip():
+            print(f"Leere ffprobe Ausgabe für {normalized_path}")
+            return {}
+            
         metadata = json.loads(result.stdout)
         return metadata
+    except json.JSONDecodeError as e:
+        print(f"JSON Parsing Fehler für {file_path}: {e}")
+        return {}
     except Exception as e:
-        print(f"ffprobe error: {e}")
-        return {}  # Gibt im Fehlerfall ein leeres Dictionary zurück
+        print(f"ffprobe Fehler: {e}")
+        return {}
 
 def get_mp3_metadata_with_timeout(file_path, timeout=5):
     def fetch_metadata():
@@ -588,10 +618,18 @@ def display_folders(folder_path, search_results=None):
         widget.destroy()
     folder_frame.update_idletasks()
 
-    window_width = root.winfo_width()
+    # Canvas-Breite verwenden statt root-Breite
+    canvas_width = folder_canvas.winfo_width()
+    if canvas_width <= 1:  # Fallback wenn Canvas noch nicht initialisiert
+        canvas_width = root.winfo_width()
+    
     button_width = 170
-    num_columns = calculate_columns(window_width, button_width)
+    num_columns = calculate_columns(canvas_width, button_width)
 
+    # Grid-Konfiguration zurücksetzen und neu konfigurieren
+    for i in range(20):  # Entferne alte Spalten-Konfigurationen
+        folder_frame.grid_columnconfigure(i, weight=0)
+    
     folder_frame.columnconfigure(tuple(range(num_columns)), weight=1)
 
     row, column = 0, 0
@@ -635,6 +673,10 @@ def display_folders(folder_path, search_results=None):
             column = 0
             if row >= 100:
                 break
+    # Canvas Scroll-Region aktualisieren
+    folder_frame.update_idletasks()
+    folder_canvas.configure(scrollregion=folder_canvas.bbox('all'))
+
 
 def navigate_to_folder(path):
     global folder_path, search_active, current_search_results
@@ -659,9 +701,19 @@ def display_files(files_or_folder_path):
         widget.destroy()
     media_frame.update_idletasks()
 
-    window_width = root.winfo_width()
+    # Canvas-Breite verwenden
+    canvas_width = media_canvas.winfo_width()
+    if canvas_width <= 1:  # Fallback
+        canvas_width = root.winfo_width()
+    
     button_width = 170
-    num_columns = calculate_columns(window_width - media_scrollbar.winfo_width(), button_width)
+    num_columns = calculate_columns(canvas_width - media_scrollbar.winfo_width(), button_width)
+
+    # Grid-Konfiguration zurücksetzen
+    for i in range(20):
+        media_frame.grid_columnconfigure(i, weight=0)
+    
+    media_frame.columnconfigure(tuple(range(num_columns)), weight=1)
 
     row, column = 0, 0
     
@@ -688,8 +740,8 @@ def display_files(files_or_folder_path):
                 file = os.path.basename(file)
             file_name, file_ext = os.path.splitext(file)
 
-            media_box = tk.Button(media_frame, text=file_name, width=20, height=2, wraplength=150, command=lambda path=file_path: os.startfile(path))
-            media_box.grid(row=row, column=column, padx=5, pady=5)
+            media_box = tk.Button(media_frame, text=file_name, width=20, height=2, wraplength=150, command=lambda path=file_path: safe_startfile(path))
+            media_box.grid(row=row, column=column, padx=5, pady=5, sticky='nsew')
 
             default_font = media_box.cget("font")
             new_font = tkFont.Font(font=default_font)
@@ -708,9 +760,9 @@ def display_files(files_or_folder_path):
                 if row >= 100:
                     break
 
+    # Canvas Scroll-Region aktualisieren
     if media_box:
-        media_frame_width = (button_width + padding_x) * num_columns
-        media_frame.config(width=media_frame_width, height=(row + 1) * (media_box.winfo_reqheight() + 10))
+        media_frame.update_idletasks()
         media_canvas.configure(scrollregion=media_canvas.bbox('all'))
 
 def get_image_path(file_path):
@@ -723,18 +775,52 @@ def get_image_path(file_path):
     return None
 
 def get_media_duration(file_path):
+    """Extrahiert Videolänge mit besserer Fehlerbehandlung"""
     try:
+        # Pfad normalisieren
+        normalized_path = os.path.normpath(file_path)
+        
         result = subprocess.run(
-            [ffprobe_path, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path],
+            [ffprobe_path, '-v', 'error', '-show_entries', 'format=duration', 
+             '-of', 'default=noprint_wrappers=1:nokey=1', normalized_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
+        
         duration_output = result.stdout.strip()
-        duration = float(duration_output)
-        return f"{int(duration // 60)} min"
-    except (ValueError, subprocess.CalledProcessError) as e:
-        print(f"Error extracting video length: {e}")
-        return None
+        
+        # Prüfe ob Output leer oder ungültig ist
+        if not duration_output or duration_output == 'N/A':
+            print(f"Keine Dauer verfügbar für: {file_path}")
+            return "Unbekannt"
+            
+        try:
+            duration = float(duration_output)
+            return f"{int(duration // 60)} min"
+        except ValueError:
+            print(f"Ungültige Dauer '{duration_output}' für: {file_path}")
+            return "Unbekannt"
+            
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Fehler beim Extrahieren der Videolänge von {file_path}: {e}")
+        return "Unbekannt"
+
+def safe_startfile(file_path):
+    """Sichere Datei-Öffnung mit Pfad-Normalisierung"""
+    try:
+        # Pfad normalisieren und Existenz prüfen
+        normalized_path = os.path.normpath(file_path)
+        
+        if not os.path.exists(normalized_path):
+            messagebox.showerror("Datei nicht gefunden", 
+                               f"Die Datei konnte nicht gefunden werden:\n{normalized_path}")
+            return
+            
+        os.startfile(normalized_path)
+    except Exception as e:
+        messagebox.showerror("Fehler beim Öffnen", 
+                           f"Fehler beim Öffnen der Datei:\n{file_path}\n\nFehler: {e}")
+
            
 def get_metadata_info(file_path):
     try:
@@ -756,16 +842,47 @@ def get_metadata_info(file_path):
         return "Keine Metadaten verfügbar"
 
 def on_root_configure(event):
-    global previous_window_size
-
-    current_window_size = (root.winfo_width(), root.winfo_height())
+    global resize_after_id, previous_window_size
     
-    if previous_window_size != current_window_size:
-        previous_window_size = current_window_size
-        root.after(100, lambda: refresh_ui())
+    # Nur auf root-Widget Events reagieren, nicht auf Child-Widgets
+    if event.widget != root:
+        return
+    
+    if resize_after_id:
+        root.after_cancel(resize_after_id)
+    
+    current_size = (root.winfo_width(), root.winfo_height())
+    if previous_window_size != current_size:
+        previous_window_size = current_size
+        # Längere Verzögerung für stabilere Updates
+        resize_after_id = root.after(200, refresh_ui)
+
+def on_canvas_configure(event, canvas_type):
+    """Handler für Canvas-Größenänderungen"""
+    # Nur refresh wenn sich die Größe tatsächlich geändert hat
+    if canvas_type == 'folder':
+        folder_canvas.after_idle(lambda: refresh_ui() if folder_path else None)
+    elif canvas_type == 'media':
+        media_canvas.after_idle(lambda: refresh_ui() if folder_path else None)
+
+def bind_scroll_to_canvas(canvas):
+    global current_scroll_handler
+    if current_scroll_handler:
+        root.unbind_all("<MouseWheel>")
+    
+    def scroll_handler(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    
+    current_scroll_handler = root.bind_all("<MouseWheel>", scroll_handler)
+
 
 def refresh_ui():
+    """UI mit korrekter Größenberechnung aktualisieren"""
     if folder_path:
+        # Canvas-Größen explizit aktualisieren
+        folder_canvas.update_idletasks()
+        media_canvas.update_idletasks()
+        
         if search_active:
             display_folders(folder_path, current_search_results)
             display_files(current_search_results)
@@ -835,7 +952,7 @@ def train_db_with_progress():
         total_files = sum([len(files) for r, d, files in os.walk(folder_path) if any(f.lower().endswith(media_extensions) for f in files)])
         current_file_count = 0
 
-        conn = sqlite3.connect('media_index.db')
+        conn = sqlite3.connect('media_index.db', timeout=30.0)
         cursor = conn.cursor()
 
         for root_dir, _, files in os.walk(folder_path):
@@ -981,6 +1098,29 @@ def open_settings():
     load_settings()
 
 
+def cleanup_widget_tooltips(widget):
+    """Recursively clean up tooltips for widget and all children"""
+    if hasattr(widget, "tooltip"):
+        try:
+            widget.tooltip.destroy()
+        except:
+            pass
+        del widget.tooltip
+    
+    if hasattr(widget, "tooltip_after_id"):
+        try:
+            widget.after_cancel(widget.tooltip_after_id)
+        except:
+            pass
+        del widget.tooltip_after_id
+    
+    # Recursively clean children
+    try:
+        for child in widget.winfo_children():
+            cleanup_widget_tooltips(child)
+    except:
+        pass
+
 def on_close_settings(window):
     global settings_window
     settings_window = None
@@ -991,9 +1131,13 @@ def on_keypress(event):
         perform_search()
 
 def on_closing():
-    for widget in folder_frame.winfo_children():
-        widget.destroy()
-
+    # Alle Tooltips zerstören
+    for widget in root.winfo_children():
+        cleanup_widget_tooltips(widget)
+    
+    # Event-Bindings entfernen
+    root.unbind_all("<MouseWheel>")
+    
     save_last_directory()
     root.destroy()
 
@@ -1088,11 +1232,13 @@ def update_media_scrollregion(event):
 
 media_frame.bind("<Configure>", update_media_scrollregion)
 
-folder_canvas.bind("<Enter>", lambda _: folder_canvas.bind_all("<MouseWheel>", lambda event: folder_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")))
-folder_canvas.bind("<Leave>", lambda _: folder_canvas.unbind_all("<MouseWheel>"))
+folder_canvas.bind("<Enter>", lambda _: bind_scroll_to_canvas(folder_canvas))
+folder_canvas.bind("<Leave>", lambda _: root.unbind_all("<MouseWheel>"))
+folder_canvas.bind('<Configure>', lambda event: on_canvas_configure(event, 'folder'))
 
-media_canvas.bind("<Enter>", lambda _: media_canvas.bind_all("<MouseWheel>", lambda event: media_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")))
-media_canvas.bind("<Leave>", lambda _: media_canvas.unbind_all("<MouseWheel>"))
+media_canvas.bind("<Enter>", lambda _: bind_scroll_to_canvas(media_canvas))
+media_canvas.bind("<Leave>", lambda _: root.unbind_all("<MouseWheel>"))
+media_canvas.bind('<Configure>', lambda event: on_canvas_configure(event, 'media'))
 
 load_last_directory()
 load_settings()
