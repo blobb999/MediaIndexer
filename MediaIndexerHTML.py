@@ -1727,6 +1727,16 @@ def enrich_media_data(media_dict, use_cache=True):
     """
     filepath = media_dict.get('filepath', '')
     category = media_dict.get('category', '')
+
+    # Kategorie NORMALISIEREN, nicht nur übernehmen
+    if category and category.strip():
+        normalized = normalize_category(category)
+    else:
+        normalized = detect_category_from_filepath(filepath)
+    
+    # Speichere beide Varianten
+    media_dict['category'] = category  # Original behalten
+    media_dict['normalized_category'] = normalized  # Normalisiert für UI
     
     # Kategorie-Korrektur wenn fehlt oder unbekannt
     if not category or category.strip() == '' or category in ['Unbekannt', 'unkategorisiert']:
@@ -4261,11 +4271,27 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
     
     # Kategorie-Statistiken
     category_stats = {}
-    for media in all_media_json:
-        cat = media.get('normalized_category', 'Unbekannt')
-        if cat not in category_stats:
-            category_stats[cat] = 0
-        category_stats[cat] += 1
+    try:
+        with HierarchyDBConnection() as cursor:
+            cursor.execute("""
+                SELECT normalized_category, COUNT(*) as count
+                FROM hierarchy_cache
+                GROUP BY normalized_category
+                ORDER BY normalized_category
+            """)
+            for row in cursor.fetchall():
+                cat, count = row
+                if cat:
+                    category_stats[cat] = count
+    except Exception as e:
+        print(f"⚠️ Fehler bei Hierarchie-DB Zählung: {e}")
+        # Fallback auf alte Methode
+        category_stats = {}
+        for media in all_media_json:
+            cat = media.get('normalized_category', 'Unbekannt')
+            if cat not in category_stats:
+                category_stats[cat] = 0
+            category_stats[cat] += 1
     
     stats_items = []
     for cat in categories:
@@ -7131,9 +7157,41 @@ def generate_web_interface():
             all_media.append(media)
 
     # Kategorien aus Cache laden
-    with HierarchyDBConnection() as cursor_hierarchy:
-        cursor_hierarchy.execute("SELECT DISTINCT normalized_category FROM hierarchy_cache ORDER BY normalized_category")
-        categories = [row[0] for row in cursor_hierarchy.fetchall() if row[0]]
+    categories = []
+    try:
+        with HierarchyDBConnection() as cursor:
+            cursor.execute("""
+                SELECT DISTINCT normalized_category 
+                FROM hierarchy_cache 
+                WHERE normalized_category IS NOT NULL 
+                AND normalized_category != ''
+                ORDER BY normalized_category
+            """)
+            categories = [row[0] for row in cursor.fetchall()]
+            
+        # Falls keine Kategorien gefunden, versuche Haupt-DB
+        if not categories:
+            print("⚠️ Keine Kategorien in Hierarchie-DB, versuche Haupt-DB...")
+            with MainDBConnection() as cursor_main:
+                cursor_main.execute("""
+                    SELECT DISTINCT category 
+                    FROM media_files 
+                    WHERE category IS NOT NULL 
+                    AND category != ''
+                    ORDER BY category
+                """)
+                raw_categories = [row[0] for row in cursor_main.fetchall()]
+                
+                # Normalisiere die Kategorienamen
+                for cat in raw_categories:
+                    normalized = normalize_category(cat)
+                    if normalized not in categories:
+                        categories.append(normalized)
+                        
+    except Exception as e:
+        print(f"⚠️ Fehler beim Laden der Kategorien: {e}")
+        # Notfall-Fallback
+        categories = ['Film', 'Serie', 'Musik', 'Tool', 'Dokumentation', 'Hörbuch']
 
     # Verteilung anzeigen
     print("\n📊 REAL MEDIA DISTRIBUTION:")
