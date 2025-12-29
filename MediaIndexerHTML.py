@@ -152,6 +152,9 @@ INCOMPATIBLE_VIDEO_EXTENSIONS = (
     ".ogv", ".ts", ".vob"
 )
 
+# MP4-Dateien die möglicherweise Probleme haben (werden geprüft)
+POTENTIALLY_PROBLEMATIC_MP4 = (".mp4",)
+
 # Alle unterstützten Video-Formate
 VIDEO_EXTENSIONS = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm",
@@ -187,7 +190,7 @@ CATEGORY_MAPPING = {
 # -----------------------------------------------------------------------------
 DB_PATH = 'media_index.db'                    # Haupt-Datenbank mit Medien-Metadaten
 HIERARCHY_DB_PATH = 'media_indexHTML.db'      # Hierarchie-Cache-Datenbank
-SETTINGS_DB_PATH = 'media_settings.db'        # NEUE Settings-Datenbank
+SETTINGS_DB_PATH = 'media_settings.db'        # Settings-Datenbank
 HTML_PATH = 'media_platform.html'             # Generierte Web-Oberfläche
 SERVER_PORT = 8010                            # HTTP-Server Port
 
@@ -260,7 +263,7 @@ except Exception as e:
     print(f"⚠️ Fallback auf temporäres Verzeichnis: {THUMBNAIL_DIR}")
 
 # -----------------------------------------------------------------------------
-# SETTINGS & NETWORK MANAGEMENT (NEU)
+# SETTINGS & NETWORK MANAGEMENT
 # -----------------------------------------------------------------------------
 
 # Default-Settings (werden aus DB geladen wenn vorhanden)
@@ -1763,7 +1766,7 @@ def enrich_media_data(media_dict, use_cache=True):
         except Exception as e:
             print(f"⚠️ Hierarchie-Cache-Fehler: {e}")
     
-    # Neues Parsing
+    # Weiteres Parsing
     hierarchy = parse_filepath_hierarchy_multipass(filepath, category)
     media_dict['hierarchy'] = hierarchy
     media_dict['normalized_category'] = category
@@ -2893,6 +2896,8 @@ def stream_video_transcoded(handler, filepath):
             "-level", "3.0",
             "-g", "30",
             "-sc_threshold", "0",
+            "-vsync", "cfr",           # Constant Frame Rate für perfekte Sync
+            "-async", "1",              # Audio-Sync Korrektur
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration", "500000",
             "-min_frag_duration", "500000",
@@ -3167,7 +3172,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_seasons(query_params)
             return
         
-        # NEUE API ENDPOINTS
+        # WEITERE API ENDPOINTS
         elif path == '/api/settings':
             self.handle_api_settings(query_params)
             return
@@ -3308,12 +3313,48 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         ext = os.path.splitext(filepath)[1].lower()
         print(f"   📁 Dateiendung: {ext}")
 
+        # Immer transcodieren: MKV, AVI, WMV, etc.
         if ext in INCOMPATIBLE_VIDEO_EXTENSIONS:
             print(f"🔁 Live-Transcoding gestartet für: {os.path.basename(filepath)}")
             stream_video_transcoded(self, filepath)
             return
 
-        print(f"📼 Normale Auslieferung für: {os.path.basename(filepath)}")
+        # MP4: Intelligente Entscheidung basierend auf Browser-Kompatibilität
+        if ext in POTENTIALLY_PROBLEMATIC_MP4:
+            # Prüfe ob es ein natives Browser-MP4 ist (H.264 + AAC)
+            try:
+                # Schnelle FFprobe-Prüfung der Codecs
+                probe_cmd = [
+                    FFMPEG_EXECUTABLE.replace('ffmpeg', 'ffprobe'),
+                    '-v', 'error',
+                    '-select_streams', 'v:0',
+                    '-show_entries', 'stream=codec_name',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    filepath
+                ]
+                
+                video_codec = subprocess.run(
+                    probe_cmd, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=3
+                ).stdout.strip()
+                
+                # Wenn nicht H.264, transcodieren
+                if video_codec != 'h264':
+                    print(f"🔁 MP4-Transcoding (Codec: {video_codec}): {os.path.basename(filepath)}")
+                    stream_video_transcoded(self, filepath)
+                    return
+                else:
+                    print(f"✅ Native MP4 (H.264): {os.path.basename(filepath)}")
+                    
+            except Exception as e:
+                # Bei Fehler: Sicherheitshalber transcodieren
+                print(f"⚠️ Codec-Prüfung fehlgeschlagen, transcodiere zur Sicherheit: {e}")
+                stream_video_transcoded(self, filepath)
+                return
+
+        print(f"📼 Direkte Auslieferung für: {os.path.basename(filepath)}")
         self.serve_file(filepath, None)
 
     def handle_static_thumbnail(self, path):
@@ -3864,7 +3905,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             print(f"❌ Rebuild-Hierarchie-Fehler: {e}")
             self.send_json_response({'success': False, 'error': str(e)}, 500)
     
-    # ===== NEUE API ENDPOINTS FÜR ERWEITERTE FEATURES =====
+    # ===== API ENDPOINTS FÜR ERWEITERTE FEATURES =====
     
     def handle_api_settings(self, query_params):
         """GET /api/settings - Alle Settings abrufen."""
@@ -5651,7 +5692,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         </section>
     </div>
     
-    <!-- NEUE BUTTONS FÜR ERWEITERTE FEATURES -->
+    <!-- ERWEITERTE FEATURES -->
     <div class="settings-toggle" onclick="showSettingsPanel()" title="Einstellungen">
         <i class="fas fa-cog"></i>
     </div>
