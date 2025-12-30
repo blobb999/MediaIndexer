@@ -3382,17 +3382,28 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                 
                 # Wenn nicht H.264, transcodieren
                 if video_codec != 'h264':
-                    print(f"🔁 MP4-Transcoding (Codec: {video_codec}): {os.path.basename(filepath)}")
+                    print(f"🔄 MP4-Transcoding (Codec: {video_codec}): {os.path.basename(filepath)}")
                     stream_video_transcoded(self, filepath)
                     return
                 else:
                     print(f"✅ Native MP4 (H.264): {os.path.basename(filepath)}")
+                    # WICHTIG: Direktes Streaming für natives MP4!
+                    # NICHT hier return, sondern unten zum direkten Streaming durchfallen
                     
             except Exception as e:
                 # Bei Fehler: Sicherheitshalber transcodieren
                 print(f"⚠️ Codec-Prüfung fehlgeschlagen, transcodiere zur Sicherheit: {e}")
                 stream_video_transcoded(self, filepath)
                 return
+        
+        # Direktes Streaming für native Browser-Formate (MP4, WebM)
+        if ext in NATIVE_BROWSER_EXTENSIONS:
+            print(f"📤 Direktes Streaming: {os.path.basename(filepath)}")
+            mime_type, _ = mimetypes.guess_type(filepath)
+            if not mime_type:
+                mime_type = 'video/mp4' if ext == '.mp4' else 'video/webm'
+            self.serve_file(filepath, mime_type)
+            return
 
     def handle_static_thumbnail(self, path):
         """Liefert statische Thumbnails aus Cache."""
