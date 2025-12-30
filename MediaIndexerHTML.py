@@ -3365,7 +3365,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                     
                 # Schnelle FFprobe-Prüfung der Codecs
                 probe_cmd = [
-                    FFPROBE_EXECUTABLE,  # Hier verwende FFprobe
+                    FFPROBE_EXECUTABLE,
                     '-v', 'error',
                     '-select_streams', 'v:0',
                     '-show_entries', 'stream=codec_name',
@@ -3386,9 +3386,10 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                     stream_video_transcoded(self, filepath)
                     return
                 else:
-                    print(f"✅ Native MP4 (H.264): {os.path.basename(filepath)}")
-                    # WICHTIG: Direktes Streaming für natives MP4!
-                    # NICHT hier return, sondern unten zum direkten Streaming durchfallen
+                    print(f"✅ Native MP4 (H.264) - Direktes Streaming: {os.path.basename(filepath)}")
+                    mime_type = 'video/mp4'
+                    self.serve_file(filepath, mime_type)
+                    return
                     
             except Exception as e:
                 # Bei Fehler: Sicherheitshalber transcodieren
@@ -3396,12 +3397,12 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                 stream_video_transcoded(self, filepath)
                 return
         
-        # Direktes Streaming für native Browser-Formate (MP4, WebM)
+        # Andere native Browser-Formate (WebM)
         if ext in NATIVE_BROWSER_EXTENSIONS:
             print(f"📤 Direktes Streaming: {os.path.basename(filepath)}")
             mime_type, _ = mimetypes.guess_type(filepath)
             if not mime_type:
-                mime_type = 'video/mp4' if ext == '.mp4' else 'video/webm'
+                mime_type = 'video/webm'
             self.serve_file(filepath, mime_type)
             return
 
