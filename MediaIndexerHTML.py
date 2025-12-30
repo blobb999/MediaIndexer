@@ -152,9 +152,6 @@ INCOMPATIBLE_VIDEO_EXTENSIONS = (
     ".ogv", ".ts", ".vob"
 )
 
-# MP4-Dateien die möglicherweise Probleme haben (werden geprüft)
-POTENTIALLY_PROBLEMATIC_MP4 = (".mp4",)
-
 # Alle unterstützten Video-Formate
 VIDEO_EXTENSIONS = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm",
@@ -190,7 +187,7 @@ CATEGORY_MAPPING = {
 # -----------------------------------------------------------------------------
 DB_PATH = 'media_index.db'                    # Haupt-Datenbank mit Medien-Metadaten
 HIERARCHY_DB_PATH = 'media_indexHTML.db'      # Hierarchie-Cache-Datenbank
-SETTINGS_DB_PATH = 'media_settings.db'        # Settings-Datenbank
+SETTINGS_DB_PATH = 'media_settings.db'        # NEUE Settings-Datenbank
 HTML_PATH = 'media_platform.html'             # Generierte Web-Oberfläche
 SERVER_PORT = 8010                            # HTTP-Server Port
 
@@ -234,30 +231,6 @@ if not FFMPEG_EXECUTABLE:
 
 print(f"✅ FFmpeg gefunden: {FFMPEG_EXECUTABLE}")
 
-# FFprobe aus gleichem Verzeichnis wie FFmpeg
-def get_ffprobe_path():
-    """Findet ffprobe im gleichen Verzeichnis wie ffmpeg"""
-    if FFMPEG_EXECUTABLE:
-        ffprobe_path = os.path.join(os.path.dirname(FFMPEG_EXECUTABLE), 'ffprobe.exe')
-        if os.path.isfile(ffprobe_path):
-            return ffprobe_path
-        
-        # Alternative Namen
-        alt_names = ['ffprobe', 'ffprobe.exe']
-        for alt in alt_names:
-            alt_path = os.path.join(os.path.dirname(FFMPEG_EXECUTABLE), alt)
-            if os.path.isfile(alt_path):
-                return alt_path
-    
-    # Fallback: Suche im PATH
-    return shutil.which("ffprobe")
-
-FFPROBE_EXECUTABLE = get_ffprobe_path()
-if not FFPROBE_EXECUTABLE:
-    print("⚠️ FFprobe wurde nicht gefunden. Codec-Prüfung wird übersprungen.")
-else:
-    print(f"✅ FFprobe gefunden: {FFPROBE_EXECUTABLE}")
-
 # -----------------------------------------------------------------------------
 # THUMBNAIL-SYSTEM KONFIGURATION
 # -----------------------------------------------------------------------------
@@ -287,7 +260,7 @@ except Exception as e:
     print(f"⚠️ Fallback auf temporäres Verzeichnis: {THUMBNAIL_DIR}")
 
 # -----------------------------------------------------------------------------
-# SETTINGS & NETWORK MANAGEMENT
+# SETTINGS & NETWORK MANAGEMENT (NEU)
 # -----------------------------------------------------------------------------
 
 # Default-Settings (werden aus DB geladen wenn vorhanden)
@@ -1754,16 +1727,6 @@ def enrich_media_data(media_dict, use_cache=True):
     """
     filepath = media_dict.get('filepath', '')
     category = media_dict.get('category', '')
-
-    # Kategorie NORMALISIEREN, nicht nur übernehmen
-    if category and category.strip():
-        normalized = normalize_category(category)
-    else:
-        normalized = detect_category_from_filepath(filepath)
-    
-    # Speichere beide Varianten
-    media_dict['category'] = category  # Original behalten
-    media_dict['normalized_category'] = normalized  # Normalisiert für UI
     
     # Kategorie-Korrektur wenn fehlt oder unbekannt
     if not category or category.strip() == '' or category in ['Unbekannt', 'unkategorisiert']:
@@ -1790,7 +1753,7 @@ def enrich_media_data(media_dict, use_cache=True):
         except Exception as e:
             print(f"⚠️ Hierarchie-Cache-Fehler: {e}")
     
-    # Weiteres Parsing
+    # Neues Parsing
     hierarchy = parse_filepath_hierarchy_multipass(filepath, category)
     media_dict['hierarchy'] = hierarchy
     media_dict['normalized_category'] = category
@@ -2920,8 +2883,6 @@ def stream_video_transcoded(handler, filepath):
             "-level", "3.0",
             "-g", "30",
             "-sc_threshold", "0",
-            "-vsync", "cfr",           # Constant Frame Rate für perfekte Sync
-            "-async", "1",              # Audio-Sync Korrektur
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration", "500000",
             "-min_frag_duration", "500000",
@@ -3060,25 +3021,14 @@ class FFmpegProcess:
             self.creationflags = subprocess.CREATE_NO_WINDOW
     
     def __enter__(self):
-        # Pfade mit Leerzeichen in Anführungszeichen setzen
-        cmd_fixed = []
-        for arg in self.cmd:
-            if ' ' in str(arg) and os.path.exists(str(arg)):
-                cmd_fixed.append(f'"{arg}"')
-            else:
-                cmd_fixed.append(str(arg))
-        
-        print(f"🔧 FFmpeg-Befehl: {' '.join(cmd_fixed[:10])}...")
-        
         self.process = subprocess.Popen(
-            cmd_fixed,  # Hier die korrigierte Liste verwenden
+            self.cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             startupinfo=self.startupinfo,
             creationflags=self.creationflags,
-            bufsize=8192,
-            shell=False  # WICHTIG: False lassen, wir setzen die Anführungszeichen selbst
+            bufsize=8192
         )
         return self.process
     
@@ -3207,7 +3157,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_api_seasons(query_params)
             return
         
-        # WEITERE API ENDPOINTS
+        # NEUE API ENDPOINTS
         elif path == '/api/settings':
             self.handle_api_settings(query_params)
             return
@@ -3348,63 +3298,13 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         ext = os.path.splitext(filepath)[1].lower()
         print(f"   📁 Dateiendung: {ext}")
 
-        # Immer transcodieren: MKV, AVI, WMV, etc.
         if ext in INCOMPATIBLE_VIDEO_EXTENSIONS:
             print(f"🔁 Live-Transcoding gestartet für: {os.path.basename(filepath)}")
             stream_video_transcoded(self, filepath)
             return
 
-        # MP4: Intelligente Entscheidung basierend auf Browser-Kompatibilität
-        if ext in POTENTIALLY_PROBLEMATIC_MP4:
-            # Prüfe ob es ein natives Browser-MP4 ist (H.264 + AAC)
-            try:
-                if not FFPROBE_EXECUTABLE:
-                    print(f"⚠️ FFprobe nicht verfügbar, transcodiere zur Sicherheit")
-                    stream_video_transcoded(self, filepath)
-                    return
-                    
-                # Schnelle FFprobe-Prüfung der Codecs
-                probe_cmd = [
-                    FFPROBE_EXECUTABLE,
-                    '-v', 'error',
-                    '-select_streams', 'v:0',
-                    '-show_entries', 'stream=codec_name',
-                    '-of', 'default=noprint_wrappers=1:nokey=1',
-                    filepath
-                ]
-                
-                video_codec = subprocess.run(
-                    probe_cmd, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=3
-                ).stdout.strip()
-                
-                # Wenn nicht H.264, transcodieren
-                if video_codec != 'h264':
-                    print(f"🔄 MP4-Transcoding (Codec: {video_codec}): {os.path.basename(filepath)}")
-                    stream_video_transcoded(self, filepath)
-                    return
-                else:
-                    print(f"✅ Native MP4 (H.264) - Direktes Streaming: {os.path.basename(filepath)}")
-                    mime_type = 'video/mp4'
-                    self.serve_file(filepath, mime_type)
-                    return
-                    
-            except Exception as e:
-                # Bei Fehler: Sicherheitshalber transcodieren
-                print(f"⚠️ Codec-Prüfung fehlgeschlagen, transcodiere zur Sicherheit: {e}")
-                stream_video_transcoded(self, filepath)
-                return
-        
-        # Andere native Browser-Formate (WebM)
-        if ext in NATIVE_BROWSER_EXTENSIONS:
-            print(f"📤 Direktes Streaming: {os.path.basename(filepath)}")
-            mime_type, _ = mimetypes.guess_type(filepath)
-            if not mime_type:
-                mime_type = 'video/webm'
-            self.serve_file(filepath, mime_type)
-            return
+        print(f"📼 Normale Auslieferung für: {os.path.basename(filepath)}")
+        self.serve_file(filepath, None)
 
     def handle_static_thumbnail(self, path):
         """Liefert statische Thumbnails aus Cache."""
@@ -3954,7 +3854,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             print(f"❌ Rebuild-Hierarchie-Fehler: {e}")
             self.send_json_response({'success': False, 'error': str(e)}, 500)
     
-    # ===== API ENDPOINTS FÜR ERWEITERTE FEATURES =====
+    # ===== NEUE API ENDPOINTS FÜR ERWEITERTE FEATURES =====
     
     def handle_api_settings(self, query_params):
         """GET /api/settings - Alle Settings abrufen."""
@@ -4361,27 +4261,11 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
     
     # Kategorie-Statistiken
     category_stats = {}
-    try:
-        with HierarchyDBConnection() as cursor:
-            cursor.execute("""
-                SELECT normalized_category, COUNT(*) as count
-                FROM hierarchy_cache
-                GROUP BY normalized_category
-                ORDER BY normalized_category
-            """)
-            for row in cursor.fetchall():
-                cat, count = row
-                if cat:
-                    category_stats[cat] = count
-    except Exception as e:
-        print(f"⚠️ Fehler bei Hierarchie-DB Zählung: {e}")
-        # Fallback auf alte Methode
-        category_stats = {}
-        for media in all_media_json:
-            cat = media.get('normalized_category', 'Unbekannt')
-            if cat not in category_stats:
-                category_stats[cat] = 0
-            category_stats[cat] += 1
+    for media in all_media_json:
+        cat = media.get('normalized_category', 'Unbekannt')
+        if cat not in category_stats:
+            category_stats[cat] = 0
+        category_stats[cat] += 1
     
     stats_items = []
     for cat in categories:
@@ -5741,7 +5625,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         </section>
     </div>
     
-    <!-- ERWEITERTE FEATURES -->
+    <!-- NEUE BUTTONS FÜR ERWEITERTE FEATURES -->
     <div class="settings-toggle" onclick="showSettingsPanel()" title="Einstellungen">
         <i class="fas fa-cog"></i>
     </div>
@@ -7247,41 +7131,9 @@ def generate_web_interface():
             all_media.append(media)
 
     # Kategorien aus Cache laden
-    categories = []
-    try:
-        with HierarchyDBConnection() as cursor:
-            cursor.execute("""
-                SELECT DISTINCT normalized_category 
-                FROM hierarchy_cache 
-                WHERE normalized_category IS NOT NULL 
-                AND normalized_category != ''
-                ORDER BY normalized_category
-            """)
-            categories = [row[0] for row in cursor.fetchall()]
-            
-        # Falls keine Kategorien gefunden, versuche Haupt-DB
-        if not categories:
-            print("⚠️ Keine Kategorien in Hierarchie-DB, versuche Haupt-DB...")
-            with MainDBConnection() as cursor_main:
-                cursor_main.execute("""
-                    SELECT DISTINCT category 
-                    FROM media_files 
-                    WHERE category IS NOT NULL 
-                    AND category != ''
-                    ORDER BY category
-                """)
-                raw_categories = [row[0] for row in cursor_main.fetchall()]
-                
-                # Normalisiere die Kategorienamen
-                for cat in raw_categories:
-                    normalized = normalize_category(cat)
-                    if normalized not in categories:
-                        categories.append(normalized)
-                        
-    except Exception as e:
-        print(f"⚠️ Fehler beim Laden der Kategorien: {e}")
-        # Notfall-Fallback
-        categories = ['Film', 'Serie', 'Musik', 'Tool', 'Dokumentation', 'Hörbuch']
+    with HierarchyDBConnection() as cursor_hierarchy:
+        cursor_hierarchy.execute("SELECT DISTINCT normalized_category FROM hierarchy_cache ORDER BY normalized_category")
+        categories = [row[0] for row in cursor_hierarchy.fetchall() if row[0]]
 
     # Verteilung anzeigen
     print("\n📊 REAL MEDIA DISTRIBUTION:")
