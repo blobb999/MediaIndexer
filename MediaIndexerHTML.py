@@ -234,6 +234,30 @@ if not FFMPEG_EXECUTABLE:
 
 print(f"✅ FFmpeg gefunden: {FFMPEG_EXECUTABLE}")
 
+# FFprobe aus gleichem Verzeichnis wie FFmpeg
+def get_ffprobe_path():
+    """Findet ffprobe im gleichen Verzeichnis wie ffmpeg"""
+    if FFMPEG_EXECUTABLE:
+        ffprobe_path = os.path.join(os.path.dirname(FFMPEG_EXECUTABLE), 'ffprobe.exe')
+        if os.path.isfile(ffprobe_path):
+            return ffprobe_path
+        
+        # Alternative Namen
+        alt_names = ['ffprobe', 'ffprobe.exe']
+        for alt in alt_names:
+            alt_path = os.path.join(os.path.dirname(FFMPEG_EXECUTABLE), alt)
+            if os.path.isfile(alt_path):
+                return alt_path
+    
+    # Fallback: Suche im PATH
+    return shutil.which("ffprobe")
+
+FFPROBE_EXECUTABLE = get_ffprobe_path()
+if not FFPROBE_EXECUTABLE:
+    print("⚠️ FFprobe wurde nicht gefunden. Codec-Prüfung wird übersprungen.")
+else:
+    print(f"✅ FFprobe gefunden: {FFPROBE_EXECUTABLE}")
+
 # -----------------------------------------------------------------------------
 # THUMBNAIL-SYSTEM KONFIGURATION
 # -----------------------------------------------------------------------------
@@ -3036,14 +3060,25 @@ class FFmpegProcess:
             self.creationflags = subprocess.CREATE_NO_WINDOW
     
     def __enter__(self):
+        # Pfade mit Leerzeichen in Anführungszeichen setzen
+        cmd_fixed = []
+        for arg in self.cmd:
+            if ' ' in str(arg) and os.path.exists(str(arg)):
+                cmd_fixed.append(f'"{arg}"')
+            else:
+                cmd_fixed.append(str(arg))
+        
+        print(f"🔧 FFmpeg-Befehl: {' '.join(cmd_fixed[:10])}...")
+        
         self.process = subprocess.Popen(
-            self.cmd,
+            cmd_fixed,  # Hier die korrigierte Liste verwenden
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             startupinfo=self.startupinfo,
             creationflags=self.creationflags,
-            bufsize=8192
+            bufsize=8192,
+            shell=False  # WICHTIG: False lassen, wir setzen die Anführungszeichen selbst
         )
         return self.process
     
@@ -3323,9 +3358,14 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         if ext in POTENTIALLY_PROBLEMATIC_MP4:
             # Prüfe ob es ein natives Browser-MP4 ist (H.264 + AAC)
             try:
+                if not FFPROBE_EXECUTABLE:
+                    print(f"⚠️ FFprobe nicht verfügbar, transcodiere zur Sicherheit")
+                    stream_video_transcoded(self, filepath)
+                    return
+                    
                 # Schnelle FFprobe-Prüfung der Codecs
                 probe_cmd = [
-                    FFMPEG_EXECUTABLE.replace('ffmpeg', 'ffprobe'),
+                    FFPROBE_EXECUTABLE,  # Hier verwende FFprobe
                     '-v', 'error',
                     '-select_streams', 'v:0',
                     '-show_entries', 'stream=codec_name',
@@ -3353,9 +3393,6 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                 print(f"⚠️ Codec-Prüfung fehlgeschlagen, transcodiere zur Sicherheit: {e}")
                 stream_video_transcoded(self, filepath)
                 return
-
-        print(f"📼 Direkte Auslieferung für: {os.path.basename(filepath)}")
-        self.serve_file(filepath, None)
 
     def handle_static_thumbnail(self, path):
         """Liefert statische Thumbnails aus Cache."""
