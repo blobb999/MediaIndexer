@@ -1966,7 +1966,7 @@ def update_hierarchy_cache(media_dict):
 def rebuild_hierarchy_cache():
     """
     Baut den gesamten Hierarchie-Cache neu auf.
-    Korrigiert automatisch fehlerhafte Kategorien.
+    KRITISCHER FIX: Kategorie-Normalisierung + Genre-Extraktion aus Ordnern
     
     Returns:
         bool: Erfolg des Neuaufbaus
@@ -2048,19 +2048,47 @@ def rebuild_hierarchy_cache():
                                 errors += 1
                                 continue
                             
-                            # Kategorie korrigieren
+                            # 🔧 FIX 1: Original-Kategorie aus DB BEIBEHALTEN
                             original_category = media.get('category', '')
-                            corrected_category = detect_category_from_filepath(filepath)
                             
+                            # Nur normalisieren wenn leer
+                            if not original_category or original_category.strip() == '':
+                                corrected_category = detect_category_from_filepath(filepath)
+                            else:
+                                # WICHTIG: Original-Kategorie normalisieren für Konsistenz
+                                corrected_category = normalize_category(original_category)
+                            
+                            # Fallback
                             if not corrected_category or corrected_category == 'Unbekannt':
-                                corrected_category = original_category if original_category else 'Unbekannt'
+                                corrected_category = 'Unbekannt'
                             
-                            media['category'] = corrected_category
+                            # 🔧 FIX 2: Hierarchie mit ORIGINAL-Kategorie parsen
+                            hierarchy = parse_filepath_hierarchy_multipass(filepath, original_category)
                             
-                            # Hierarchie parsen
-                            hierarchy = parse_filepath_hierarchy_multipass(filepath, corrected_category)
+                            # 🔧 FIX 3: Genre DIREKT aus Ordnerstruktur extrahieren
+                            # Genre = Erster Ordner nach Kategorie-Ordner
+                            path_obj = Path(filepath)
+                            parts = path_obj.parts
                             
-                            # In Cache schreiben
+                            # Finde Kategorie-Index (case-insensitive)
+                            cat_index = -1
+                            category_variants = get_category_variants(corrected_category)
+                            for i, part in enumerate(parts):
+                                part_lower = part.lower()
+                                if any(variant.lower() in part_lower for variant in category_variants):
+                                    cat_index = i
+                                    break
+                            
+                            # Genre = Ordner nach Kategorie
+                            actual_genre = None
+                            if cat_index >= 0 and cat_index + 1 < len(parts) - 1:  # -1 weil letzter ist Datei
+                                actual_genre = parts[cat_index + 1]
+                                print(f"   🎯 Genre aus Pfad: {actual_genre} (aus: {filepath})")
+                            
+                            # Verwende Ordner-Genre wenn vorhanden, sonst Hierarchie-Genre
+                            final_genre = actual_genre if actual_genre else hierarchy.get('genre')
+                            
+                            # In Cache schreiben mit KORRIGIERTEM Genre
                             cursor_hierarchy.execute('''
                                 INSERT OR REPLACE INTO hierarchy_cache 
                                 (filepath, normalized_category, hierarchy_json, genre, subgenre, 
@@ -2069,9 +2097,9 @@ def rebuild_hierarchy_cache():
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''', (
                                 filepath,
-                                corrected_category,
+                                corrected_category,  # Normalisierte Kategorie
                                 json.dumps(hierarchy, ensure_ascii=False),
-                                hierarchy.get('genre'),
+                                final_genre,  # 🔧 Korrigiertes Genre aus Ordner!
                                 hierarchy.get('subgenre'),
                                 hierarchy.get('franchise'),
                                 hierarchy.get('sub_franchise'),
@@ -2119,7 +2147,7 @@ def rebuild_hierarchy_cache():
         except Exception as e:
             print(f"⚠️ Fehler beim Aktualisieren der Statistiken: {e}")
         
-        # Cache-Inhalt anzeigen
+        # Cache-Inhalt anzeigen MIT GENRE-VERTEILUNG
         print("\n🔍 CACHE-DATENBANK INHALT:")
         try:
             conn_check = sqlite3.connect(HIERARCHY_DB_PATH)
@@ -2131,6 +2159,19 @@ def rebuild_hierarchy_cache():
             print("   📊 Kategorien im Cache:")
             for cat, count in categories_in_cache:
                 print(f"      {cat}: {count} Medien")
+                
+                # Genre-Verteilung pro Kategorie
+                cursor_check.execute("""
+                    SELECT genre, COUNT(*) 
+                    FROM hierarchy_cache 
+                    WHERE normalized_category = ? AND genre IS NOT NULL AND genre != ''
+                    GROUP BY genre 
+                    ORDER BY COUNT(*) DESC 
+                    LIMIT 5
+                """, (cat,))
+                genres = cursor_check.fetchall()
+                if genres:
+                    print(f"         Top Genres: {', '.join([f'{g[0]} ({g[1]})' for g in genres])}")
             
             conn_check.close()
         except Exception as e:
@@ -3295,6 +3336,113 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         else:
             self.serve_color_thumbnail(filepath)
 
+    def handle_range_request(self, filepath, content_type, range_header):
+        """Handle HTTP Range Requests für effizientes Video-Seeking mit adaptiven Chunks."""
+        try:
+            file_size = os.path.getsize(filepath)
+            
+            if file_size == 0:
+                print(f"❌ Leere Datei: {os.path.basename(filepath)}")
+                self.send_error(404, "Empty file")
+                return
+            
+            # Range-Header parsen: "bytes=start-end" oder "bytes=start-"
+            range_match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+            if not range_match:
+                print(f"⚠️ Ungültiger Range-Header: {range_header}")
+                self.send_error(416, "Invalid Range Header")
+                return
+                
+            start = int(range_match.group(1))
+            end_str = range_match.group(2)
+            
+            # ENDE KORRIGIERT: Wenn kein Ende angegeben, bis zum Dateiende
+            if end_str:
+                end = int(end_str)
+                if end >= file_size:
+                    end = file_size - 1
+            else:
+                # "bytes=1109229568-" → bis zum Dateiende
+                end = file_size - 1
+            
+            # Grenzen validieren
+            if start >= file_size:
+                print(f"⚠️ Start ({start}) >= File Size ({file_size})")
+                self.send_error(416, "Requested Range Not Satisfiable")
+                return
+                
+            if start > end:
+                print(f"⚠️ Start ({start}) > End ({end})")
+                self.send_error(416, "Requested Range Not Satisfiable")
+                return
+                
+            length = end - start + 1
+            
+            print(f"   📊 Range-Request: {start}-{end} ({length / 1024:.1f}KB von {file_size / (1024*1024):.1f}MB)")
+            
+            # ADAPTIVE CHUNK-GRÖSSE für Range-Requests
+            if length > 100 * 1024 * 1024:  # >100MB
+                chunk_size = 2 * 1024 * 1024  # 2MB
+            elif length > 10 * 1024 * 1024:  # >10MB
+                chunk_size = 1 * 1024 * 1024  # 1MB
+            else:
+                chunk_size = 256 * 1024  # 256KB
+            
+            # Partial Content Response mit optimierten Headers
+            self.send_response(206)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(length))
+            self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Connection', 'keep-alive')
+            self.end_headers()
+            
+            # OPTIMIERTES RANGE-STREAMING MIT BESSEREM ERROR-HANDLING
+            bytes_sent = 0
+            try:
+                with open(filepath, 'rb') as f:
+                    f.seek(start)
+                    remaining = length
+                    
+                    last_flush_time = time.time()
+                    flush_interval = 0.05  # Alle 50ms flushen
+                    
+                    while remaining > 0:
+                        chunk = f.read(min(chunk_size, remaining))
+                        if not chunk:
+                            print(f"ℹ️ Dateiende erreicht: {bytes_sent / 1024:.1f}KB gesendet")
+                            break
+                            
+                        try:
+                            self.wfile.write(chunk)
+                            self.wfile.flush()  # SOFORTIGES FLUSH nach jedem Chunk!
+                            bytes_sent += len(chunk)
+                            remaining -= len(chunk)
+                            
+                            # Fortschritt anzeigen
+                            if length > 10 * 1024 * 1024 and bytes_sent % (10 * 1024 * 1024) < chunk_size:
+                                percent = (bytes_sent / length) * 100
+                                print(f"   📈 Range-Fortschritt: {bytes_sent / 1024:.1f}KB ({percent:.1f}%)")
+                                
+                        except (ConnectionAbortedError, BrokenPipeError, OSError) as e:
+                            # NORMALER ABBRUCH - Benutzer hat Video gestoppt/geskippt
+                            print(f"ℹ️ Client hat Streaming gestoppt: {bytes_sent / 1024:.1f}KB gesendet")
+                            return  # SILENT RETURN - kein Error werfen!
+                
+                print(f"✅ Range vollständig gesendet: {bytes_sent / 1024:.1f}KB")
+                
+            except Exception as e:
+                print(f"⚠️ Datei-Lesefehler: {e}")
+                # Kein send_error() hier - Client hat bereits Response-Headers bekommen
+            
+        except Exception as e:
+            print(f"❌ Range-Request Setup Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_error(500, "Internal Server Error")
+
     def handle_media_request(self, query_params):
         """Verarbeitet Media-Streaming-Anfragen."""
         filepath = query_params.get('filepath', [None])[0]
@@ -3317,20 +3465,18 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
 
         # In Datenbank prüfen
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM media_files WHERE filepath = ?",
-                (filepath,)
-            )
-            result = cursor.fetchone()[0]
-            conn.close()
+            with MainDBConnection() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM media_files WHERE filepath = ?",
+                    (filepath,)
+                )
+                result = cursor.fetchone()[0]
 
-            if result == 0:
-                self.send_error(403, "Datei nicht in der Datenbank")
-                return
-            else:
-                print(f"✅ Datei in Datenbank gefunden: {os.path.basename(filepath)}")
+                if result == 0:
+                    self.send_error(403, "Datei nicht in der Datenbank")
+                    return
+                else:
+                    print(f"✅ Datei in Datenbank gefunden: {os.path.basename(filepath)}")
         except Exception as e:
             print(f"⚠️ Datenbankfehler bei Medien-Prüfung: {e}")
 
@@ -3339,10 +3485,18 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Datei nicht gefunden")
             return
 
-        # Transcoding oder direktes Streaming
+        # MIME-Type frühzeitig bestimmen (FIX für Scope-Problem!)
         ext = os.path.splitext(filepath)[1].lower()
+        mime_type, _ = mimetypes.guess_type(filepath)
+        if not mime_type:
+            mime_type = 'video/mp4' if ext == '.mp4' else 'video/webm' if ext == '.webm' else 'application/octet-stream'
+        
         print(f"   📁 Dateiendung: {ext}")
+        print(f"   🎯 MIME-Type: {mime_type}")
 
+        # Range-Header frühzeitig prüfen (für alle Dateien)
+        range_header = self.headers.get('Range')
+        
         # Immer transcodieren: MKV, AVI, WMV, etc.
         if ext in INCOMPATIBLE_VIDEO_EXTENSIONS:
             print(f"🔁 Live-Transcoding gestartet für: {os.path.basename(filepath)}")
@@ -3351,6 +3505,12 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
 
         # MP4: Intelligente Entscheidung basierend auf Browser-Kompatibilität
         if ext in POTENTIALLY_PROBLEMATIC_MP4:
+            # Range-Request für MP4s direkt behandeln
+            if range_header:
+                print(f"🎯 Range-Request für MP4: {range_header}")
+                self.handle_range_request(filepath, mime_type, range_header)
+                return
+                
             # Prüfe ob es ein natives Browser-MP4 ist (H.264 + AAC)
             try:
                 if not FFPROBE_EXECUTABLE:
@@ -3360,7 +3520,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                     
                 # Schnelle FFprobe-Prüfung der Codecs
                 probe_cmd = [
-                    FFPROBE_EXECUTABLE,  # Hier verwende FFprobe
+                    FFPROBE_EXECUTABLE,
                     '-v', 'error',
                     '-select_streams', 'v:0',
                     '-show_entries', 'stream=codec_name',
@@ -3382,8 +3542,9 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                     return
                 else:
                     print(f"✅ Native MP4 (H.264): {os.path.basename(filepath)}")
-                    # WICHTIG: Direktes Streaming für natives MP4!
-                    # NICHT hier return, sondern unten zum direkten Streaming durchfallen
+                    # Direktes Streaming für natives MP4
+                    self.serve_file(filepath, mime_type)
+                    return
                     
             except Exception as e:
                 # Bei Fehler: Sicherheitshalber transcodieren
@@ -3393,10 +3554,13 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         
         # Direktes Streaming für native Browser-Formate (MP4, WebM)
         if ext in NATIVE_BROWSER_EXTENSIONS:
+            # Range-Request für direkte Formate
+            if range_header:
+                print(f"🎯 Range-Request für natives Format: {range_header}")
+                self.handle_range_request(filepath, mime_type, range_header)
+                return
+                
             print(f"📤 Direktes Streaming: {os.path.basename(filepath)}")
-            mime_type, _ = mimetypes.guess_type(filepath)
-            if not mime_type:
-                mime_type = 'video/mp4' if ext == '.mp4' else 'video/webm'
             self.serve_file(filepath, mime_type)
             return
 
@@ -4088,76 +4252,87 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json_data.encode('utf-8'))
         
     def serve_file(self, filepath, content_type):
-        """Liefert Dateien mit korrekten Headers und Sicherheitsprüfungen."""
+        """Liefert Dateien mit optimiertem Streaming und adaptive Chunk-Größen."""
         try:
             if not os.path.isfile(filepath):
                 self.send_error(404, "Datei nicht gefunden")
                 return
 
             file_size = os.path.getsize(filepath)
-
+            
             # Content-Type bestimmen
             if content_type is None:
                 content_type, _ = mimetypes.guess_type(filepath)
                 content_type = content_type or 'application/octet-stream'
 
             base_content_type = content_type.split(';')[0].strip()
-            max_size = 12 * 1024 * 1024 * 1024  # 12GB max
-
-            # Größenlimits nach Dateityp
-            if base_content_type in ('application/javascript', 'text/css'):
-                max_size = 10 * 1024 * 1024
-
-            if file_size > max_size:
-                self.send_error(413, "Datei zu groß")
-                return
-
-            # MIME-Type Prüfung
-            is_allowed = (
-                base_content_type in self.ALLOWED_MIME_TYPES or
-                base_content_type.startswith('video/') or
-                base_content_type.startswith('audio/') or
-                base_content_type.startswith('image/')
-            )
-
-            if not is_allowed:
-                self.send_error(403, f"Dateityp nicht erlaubt: {base_content_type}")
-                return
-
+            
+            # OPTIMIERTE ADAPTIVE CHUNK-GRÖSSE
+            if base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
+                if file_size > 5 * 1024 * 1024 * 1024:  # >5GB
+                    chunk_size = 2 * 1024 * 1024  # 2MB
+                elif file_size > 1 * 1024 * 1024 * 1024:  # >1GB
+                    chunk_size = 1 * 1024 * 1024  # 1MB
+                else:
+                    chunk_size = 512 * 1024  # 512KB
+            else:
+                chunk_size = 256 * 1024  # 256KB
+            
+            print(f"   📊 Streaming: {os.path.basename(filepath)} ({file_size / (1024*1024):.1f}MB) - Chunk: {chunk_size/1024:.0f}KB")
+            
             # Headers senden
             self.send_response(200)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(file_size))
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('X-Content-Type-Options', 'nosniff')
-
-            # Caching-Strategien
-            if base_content_type.startswith('image/'):
+            self.send_header('Connection', 'keep-alive')
+            
+            # Cache-Strategie
+            if base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            elif base_content_type.startswith('image/'):
                 self.send_header('Cache-Control', 'public, max-age=86400')
-            elif base_content_type in ('text/html', 'application/javascript', 'text/css'):
-                self.send_header('Cache-Control', 'no-cache')
             else:
                 self.send_header('Cache-Control', 'private, max-age=3600')
-
+            
             self.end_headers()
+            
+            # OPTIMIERTES STREAMING MIT BESSEREM ERROR-HANDLING
+            bytes_sent = 0
+            try:
+                with open(filepath, 'rb') as f:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        
+                        try:
+                            self.wfile.write(chunk)
+                            bytes_sent += len(chunk)
+                            
+                            # SOFORT FLUSHEN nach jedem Chunk!
+                            self.wfile.flush()
+                                
+                        except (ConnectionAbortedError, BrokenPipeError, OSError) as e:
+                            # NORMAL - Client hat Verbindung geschlossen
+                            print(f"ℹ️ Client hat Verbindung geschlossen: {bytes_sent / (1024*1024):.1f}MB gesendet")
+                            return  # SILENT RETURN!
+                
+                print(f"✅ Datei vollständig gesendet: {os.path.basename(filepath)} ({bytes_sent / (1024*1024):.1f} MB)")
 
-            # Datei streamen
-            with open(filepath, 'rb') as f:
-                while True:
-                    chunk = f.read(64 * 1024)
-                    if not chunk:
-                        break
-                    try:
-                        self.wfile.write(chunk)
-                    except (ConnectionAbortedError, BrokenPipeError):
-                        return
-
+            except Exception as e:
+                print(f"⚠️ Datei-Lesefehler: {e}")
+                # Kein send_error() - Headers bereits gesendet
+            
         except Exception as e:
-            print(f"❌ Fehler beim Ausliefern der Datei: {e}")
+            print(f"❌ Kritischer Fehler in serve_file(): {e}")
+            import traceback
+            traceback.print_exc()
             try:
                 self.send_error(500, "Interner Fehler")
             except:
-                pass
+                pass  # Client hat Verbindung bereits geschlossen
 
     def serve_color_thumbnail(self, filepath):
         """Liefert farbiges Fallback-Thumbnail als SVG."""
