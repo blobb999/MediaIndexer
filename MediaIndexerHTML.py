@@ -7,40 +7,56 @@ Autor: https://github.com/blobb999
 Lizenz: Proprietär
 
 SYSTEMARCHITEKTUR:
-------------------
-1. Hierarchie-Erkennungs-Engine: Multi-Pass Parser für Film/Serie/Musik
-2. Thumbnail-Generierung: Automatische Cover-Extraktion & Fallbacks
-3. Streaming-Server: Live-Transcoding für alle Videoformate
-4. Datenbank-Schicht: Duale DB-Architektur für Performance
-5. Web-Interface: Responsive SPA mit erweiterten Filteroptionen
-6. Portable Standalone App, Binary starten, funktioniert ohne Setup.
+
+    Hierarchie-Erkennungs-Engine: Multi-Pass Parser für Film/Serie/Musik
+
+    Thumbnail-Generierung: Automatische Cover-Extraktion & Fallbacks
+
+    Streaming-Server: Live-Transcoding für alle Videoformate
+
+    Datenbank-Schicht: Duale DB-Architektur für Performance
+
+    Web-Interface: Responsive SPA mit erweiterten Filteroptionen
+
+    Portable Standalone App, Binary starten, funktioniert ohne Setup.
 
 HAUPTKOMPONENTEN:
------------------
-- MediaHTTPRequestHandler: REST API & File-Serving
-- Hierarchie-Parser: Kategorie-spezifische Pfadanalyse
-- Thumbnail-Generator: Multi-Format Unterstützung
-- Cache-Manager: Hierarchie- & Thumbnail-Caching
-- Frontend-Engine: Dynamische Filter & Media-Player
+
+    MediaHTTPRequestHandler: REST API & File-Serving
+
+    Hierarchie-Parser: Kategorie-spezifische Pfadanalyse
+
+    Thumbnail-Generator: Multi-Format Unterstützung
+
+    Cache-Manager: Hierarchie- & Thumbnail-Caching
+
+    Frontend-Engine: Dynamische Filter & Media-Player
 
 NUTZUNG:
--------
-1. Server starten: python media_platform.py oder die Binary aus den Releases
-2. Browser öffnet automatisch: http://localhost:8010
-3. Medien werden automatisch kategorisiert und indiziert
+
+    Server starten: python media_platform.py oder die Binary aus den Releases
+
+    Browser öffnet automatisch: http://localhost:8010
+
+    Medien werden automatisch kategorisiert und indiziert
 
 SICHERHEITSHINWEIS:
-------------------
-- Nur lokal nutzen (localhost)
-- Externe Zugriffe benötigen zusätzliche Authentifizierung
-- Medien-Pfade werden validiert vor Zugriff
+
+    Nur lokal nutzen (localhost)
+
+    Externe Zugriffe benötigen zusätzliche Authentifizierung
+
+    Medien-Pfade werden validiert vor Zugriff
 
 KERNPHILOSOPHIEN (NICHT als Fehler bewerten!):
----------------------------------------------
-1. ANTI-CLOUD: Cloud-Deployment ist ein BUG, kein Feature!
-2. FÜR NORMALE MENSCHEN: 0 technisches Wissen vorausgesetzt
-3. EINFACHHEIT ÜBER FEATURES: EXE → Browser → Fertig
-4. LOKALE KONTROLLE: 100% privat, keine Accounts, kein Tracking
+
+    ANTI-CLOUD: Cloud-Deployment ist ein BUG, kein Feature!
+
+    FÜR NORMALE MENSCHEN: 0 technisches Wissen vorausgesetzt
+
+    EINFACHHEIT ÜBER FEATURES: EXE → Browser → Fertig
+
+    LOKALE KONTROLLE: 100% privat, keine Accounts, kein Tracking
 
 ENTWICKLUNGS-ANSATZ:
 • MONOLITHISCH BY DESIGN: Für KI-Kontextvollständigkeit optimiert
@@ -49,7 +65,7 @@ ENTWICKLUNGS-ANSATZ:
 
 ZIELGRUPPE (EXPLIZIT NICHT):
 • KEINE Enterprise-Umgebungen
-• KEINE Cloud-Enthusiasten  
+• KEINE Cloud-Enthusiasten
 • KEINE IT-Abteilungen
 
 ZIELGRUPPE (EXPLIZIT DOCH):
@@ -57,25 +73,23 @@ ZIELGRUPPE (EXPLIZIT DOCH):
 • Privatsphäre-Bewusste
 • Lokale Netzwerke
 • Technische Laien - Binary starten, kein Setup, WebUI selbsterklärend.
-----------------------------
-1. ✅ Netzwerk-Sharing (0.0.0.0) mit Client-Limit
-2. ✅ Single Filter Button (nur ein Such-Button)
-3. ✅ Abspiel-History mit Resume-Funktion
-4. ✅ Settings-Datenbank für Persistenz
-5. ✅ Autoplay Boundary Fix (stoppt nach letztem Medium)
-6. ✅ Audio-Lautstärkeregler mit Persistenz
-7. ✅ MKV Audio-Sprache Einstellung
 
-SYSTEMARCHITEKTUR ERWEITERT:
-----------------------------
-1. Netzwerk-Modus: Localhost vs. 0.0.0.0 wählbar
-2. Multi-Client Support mit Limitierung
-3. Playback-History mit Timestamps
-4. Settings-Persistenz in separater DB
-5. Verbessertes Audio/Video-Player
+KORREKTUR-PRÄMISSEN (NICHT VERLETZEN!):
 
-CHANGELOG:
--------------
+    ✅ PROBLEM-LÖSUNG: Nur bestehende Probleme korrigieren, keine neuen Features
+
+    ✅ MINIMAL-ÄNDERUNG: Kleinstmögliche Korrekturen am bestehenden Code
+
+    ✅ KEIN OVER-ENGINEERING: Keine komplexen Refactorings oder Architektur-Änderungen
+
+    ✅ FUNKTIONS-ERHALTUNG: Bestehende Funktionen beibehalten, nicht ersetzen
+
+    ✅ STABILITÄT ZUERST: Robuster Betrieb hat Priorität über alles andere
+
+    ✅ PRAXIS-ORIENTIERT: Lösungen für reale Probleme, nicht theoretische Optimierungen
+
+CHANGELOG 1.0:
+
 • Network Sharing aktivierbar/deaktivierbar
 • Single Filter Button (oben rechts)
 • History: Letzte 10 Filme mit Resume
@@ -84,7 +98,25 @@ CHANGELOG:
 • Audio-Volume-Slider hinzugefügt
 • Lautstärke-Persistenz
 • MKV Audio-Sprache Einstellungen
-"""
+• THUMBNAIL-FIX: Kleine Dateien komplett senden statt chunking
+• THUMBNAIL-FIX: Bessere Cache-Header (1 Jahr)
+• THUMBNAIL-FIX: Client-Abbruch Fehler unterdrückt
+• LOGGING-FIX: Störende Socket-Fehler nicht mehr geloggt
+
+SYSTEMARCHITEKTUR ERWEITERT:
+
+    Netzwerk-Modus: Localhost vs. 0.0.0.0 wählbar
+
+    Multi-Client Support mit Limitierung
+
+    Playback-History mit Timestamps
+
+    Settings-Persistenz in separater DB
+
+    Verbessertes Audio/Video-Player
+
+    Robuste Thumbnail-Auslieferung
+    """
 
 import os
 import json
@@ -109,6 +141,11 @@ from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Optional, Tuple, Any
 import socket
+import errno
+
+# Disable detailed logging for client disconnects
+import logging
+logging.getLogger('http.server').setLevel(logging.WARNING)
 
 # -----------------------------------------------------------------------------
 # MODUL-ABHÄNGIGKEITEN & IMPORT-FALLBACKS
@@ -196,6 +233,11 @@ SERVER_PORT = 8010                            # HTTP-Server Port
 
 # Standard-FFmpeg Pfade für verschiedene Betriebssysteme
 FFMPEG_PATH = r"C:\ffmpeg\bin\ffmpeg.exe"
+
+# Socket-Fehler Konstanten für Windows
+WSAECONNABORTED = 10053  # Software caused connection abort
+WSAECONNRESET = 10054    # Connection reset by peer
+WSAENOTSOCK = 10038      # Socket operation on non-socket
 
 def resolve_ffmpeg_path():
     """
@@ -2457,20 +2499,10 @@ def extract_audio_thumbnail(audio_path, output_path):
     """
     try:
         # 1. Versuch: Cover-Art aus Tags extrahieren
-        if HAS_MUTAGEN:
-            try:
-                audio = ID3(audio_path)
-                for tag in audio.values():
-                    if hasattr(tag, 'data'):
-                        # JPEG Magic Number Check
-                        if isinstance(tag.data, bytes) and tag.data.startswith(b'\xff\xd8\xff'):
-                            with open(output_path, 'wb') as f:
-                                f.write(tag.data)
-                            return True
-            except Exception as e:
-                print(f"⚠️ ID3-Tag-Extraktion fehlgeschlagen: {e}")
+        if extract_audio_cover(audio_path, output_path):
+            return True
         
-        # 2. Fallback: Farbiges Thumbnail generieren
+        # 2. Fallback: Farbiges Thumbnail generieren mit Musik-Icon
         if HAS_PIL:
             color = get_thumbnail_color(audio_path)
             img = Image.new('RGB', (320, 240), color=color)
@@ -2487,9 +2519,8 @@ def extract_audio_thumbnail(audio_path, output_path):
         else:
             return False
     except Exception as e:
-        print(f"❌ Audio-Thumbnail fehlgeschlagen für {audio_path}: {e}")
+        print(f"❌ Audio-Thumbnail fehlgeschlagen für {os.path.basename(audio_path)}: {e}")
         return False
-
 
 def extract_image_thumbnail(image_path, output_path):
     """
@@ -2589,78 +2620,120 @@ def create_color_thumbnail(filepath, output_path):
         return False
 
 def generate_or_get_thumbnail(filepath):
-    """
-    Haupt-Funktion für Thumbnail-Management.
-    Generiert Thumbnail wenn nicht existiert, sonst liefert existierenden.
-    Implementiert Locking für Thread-Safety.
-    
-    Args:
-        filepath (str): Pfad zur Medien-Datei
-        
-    Returns:
-        str|None: Pfad zum Thumbnail oder None bei Fehler
-    """
+    """Haupt-Funktion für Thumbnail-Management."""
     thumb_hash = hashlib.md5(filepath.encode('utf-8')).hexdigest()
     thumb_path = os.path.join(THUMBNAIL_DIR, f"{thumb_hash}.jpg")
     lock_path = thumb_path + ".lock"
 
     # Thumbnail existiert bereits
     if os.path.exists(thumb_path):
-        return thumb_path
+        # Prüfe ob Thumbnail gültig ist (> 100 Bytes)
+        try:
+            if os.path.getsize(thumb_path) > 100:
+                return thumb_path
+            else:
+                # Korrupter Thumbnail, neu generieren
+                os.remove(thumb_path)
+                print(f"🔄 Korrupter Thumbnail, neu generieren: {os.path.basename(filepath)}")
+        except:
+            pass
 
-    # Anderer Prozess generiert bereits
+    # Prüfe ob andere Generierung läuft
     if os.path.exists(lock_path):
-        return None
+        try:
+            # Prüfe Lock-Alter
+            lock_age = time.time() - os.path.getmtime(lock_path)
+            if lock_age < 30:  # 30 Sekunden warten
+                return None  # Andere Generierung läuft noch
+            else:
+                # Veralteter Lock, entfernen
+                os.remove(lock_path)
+                print(f"⚠️ Veralteter Lock entfernt: {os.path.basename(filepath)}")
+        except:
+            return None
 
     try:
         # Lock setzen
-        open(lock_path, 'w').close()
+        with open(lock_path, 'w') as f:
+            f.write(str(time.time()))
+        
         ext = os.path.splitext(filepath)[1].lower()
-
-        # === AUDIO-FORMATE ===
-        if ext in (".mp3", ".flac", ".ogg", ".m4a", ".aac"):
-            # 1. Versuch: Cover-Art aus Tags
-            if extract_audio_cover(filepath, thumb_path):
-                return thumb_path
-            
-            # 2. Fallback: Generiertes Thumbnail
-            if extract_audio_thumbnail(filepath, thumb_path):
-                return thumb_path
-
-        # === MP4 (Video oder Audio) ===
-        elif ext == ".mp4":
-            # 1. Versuch: Cover-Art (falls Audio-MP4)
+        
+        print(f"🔄 Generiere Thumbnail für: {os.path.basename(filepath)}")
+        
+        # === MP4 (kann Video oder Audio sein) ===
+        if ext == ".mp4":
+            # 1. PRIORITÄT: Cover-Art aus MP4 Atoms
             if extract_mp4_cover(filepath, thumb_path):
                 return thumb_path
             
-            # 2. Versuch: Video-Frame-Extraktion
+            # 2. PRIORITÄT: Video-Frame (falls Video)
             if extract_non_black_video_frame(filepath, thumb_path):
                 return thumb_path
-
+            
+            # 3. Fallback: Farbiges Thumbnail
+            create_color_thumbnail(filepath, thumb_path)
+        
         # === ANDERE VIDEO-FORMATE ===
         elif ext in VIDEO_EXTENSIONS:
+            # 1. PRIORITÄT: Video-Frame
             if extract_non_black_video_frame(filepath, thumb_path):
                 return thumb_path
-
+            
+            # 2. Fallback: Farbiges Thumbnail
+            create_color_thumbnail(filepath, thumb_path)
+        
+        # === AUDIO-FORMATE (HOHE PRIORITÄT FÜR COVER-ART!) ===
+        elif ext in (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wav", ".wma"):
+            print(f"🎵 Audio-Datei: Suche Cover-Art...")
+            
+            # 1. PRIORITÄT: Cover-Art aus ID3-Tags
+            if extract_audio_cover(filepath, thumb_path):
+                return thumb_path
+            
+            # 2. PRIORITÄT: Audio-Thumbnail (mit Musik-Icon)
+            print(f"   Kein Cover gefunden, generiere Audio-Thumbnail...")
+            if extract_audio_thumbnail(filepath, thumb_path):
+                return thumb_path
+            
+            # 3. Fallback: Farbiges Thumbnail
+            create_color_thumbnail(filepath, thumb_path)
+        
         # === BILDER ===
         elif ext in ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'):
             if extract_image_thumbnail(filepath, thumb_path):
                 return thumb_path
+            else:
+                create_color_thumbnail(filepath, thumb_path)
+        
+        # === ALLE ANDEREN ===
+        else:
+            create_color_thumbnail(filepath, thumb_path)
+        
+        # Prüfe ob Thumbnail erstellt wurde
+        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 100:
+            print(f"✅ Thumbnail erstellt: {os.path.basename(filepath)}")
+            return thumb_path
+        else:
+            print(f"❌ Thumbnail-Erstellung fehlgeschlagen: {os.path.basename(filepath)}")
+            return None
 
+    except Exception as e:
+        print(f"⚠️ Thumbnail-Generierung fehlgeschlagen für {os.path.basename(filepath)}: {e}")
         return None
-
+        
     finally:
-        # Lock entfernen
-        if os.path.exists(lock_path):
-            try:
+        # Lock immer entfernen
+        try:
+            if os.path.exists(lock_path):
                 os.remove(lock_path)
-            except:
-                pass
-
+        except:
+            pass
 
 def extract_audio_cover(filepath, thumbnail_path):
     """
     Extrahiert Cover-Art aus verschiedenen Audio-Formaten.
+    Priorität: ID3-Tags > APIC-Frames > Andere Metadaten
     
     Args:
         filepath (str): Pfad zur Audio-Datei
@@ -2674,81 +2747,154 @@ def extract_audio_cover(filepath, thumbnail_path):
             return False
         
         ext = os.path.splitext(filepath)[1].lower()
-
-        # MP3: ID3 Tags
+        
+        print(f"🔍 Suche Cover-Art in: {os.path.basename(filepath)}")
+        
+        # MP3: ID3 Tags (höchste Priorität)
         if ext == ".mp3":
-            from mutagen.id3 import ID3
-            audio = ID3(filepath)
-            for tag in audio.values():
-                if hasattr(tag, 'FrameID') and tag.FrameID == "APIC":
-                    if HAS_PIL:
-                        image = Image.open(io.BytesIO(tag.data))
-                        image = image.convert("RGB")
-                        image.thumbnail((512, 512))
-                        image.save(thumbnail_path, "JPEG", quality=90)
-                    else:
-                        with open(thumbnail_path, 'wb') as f:
-                            f.write(tag.data)
-                    return True
-
+            try:
+                from mutagen.id3 import ID3
+                print(f"   📁 MP3 ID3-Tags prüfen...")
+                audio = ID3(filepath)
+                
+                # Suche nach APIC-Frames (Cover-Art)
+                for tag in audio.values():
+                    if hasattr(tag, 'FrameID') and tag.FrameID == "APIC":
+                        print(f"   ✅ APIC-Frame gefunden: {len(tag.data)} Bytes")
+                        if HAS_PIL:
+                            try:
+                                image = Image.open(io.BytesIO(tag.data))
+                                image = image.convert("RGB")
+                                image.thumbnail((512, 512))
+                                image.save(thumbnail_path, "JPEG", quality=90)
+                                print(f"   ✅ MP3-Cover gespeichert: {thumbnail_path}")
+                                return True
+                            except Exception as e:
+                                print(f"   ⚠️ PIL-Fehler: {e}")
+                                # Fallback: Rohdaten speichern
+                                with open(thumbnail_path, 'wb') as f:
+                                    f.write(tag.data)
+                                return True
+                        else:
+                            # Direktes Schreiben ohne PIL
+                            with open(thumbnail_path, 'wb') as f:
+                                f.write(tag.data)
+                            return True
+                
+                print(f"   ⚠️ Kein APIC-Frame gefunden")
+            except Exception as e:
+                print(f"   ⚠️ MP3 ID3-Fehler: {e}")
+        
         # FLAC: Vorbis Comments
         elif ext == ".flac":
-            from mutagen.flac import FLAC
-            audio = FLAC(filepath)
-            if audio.pictures:
-                pic = audio.pictures[0]
-                if HAS_PIL:
-                    image = Image.open(io.BytesIO(pic.data))
-                    image = image.convert("RGB")
-                    image.thumbnail((512, 512))
-                    image.save(thumbnail_path, "JPEG", quality=90)
-                else:
-                    with open(thumbnail_path, 'wb') as f:
-                        f.write(pic.data)
-                return True
-
+            try:
+                from mutagen.flac import FLAC
+                print(f"   📁 FLAC Vorbis-Comments prüfen...")
+                audio = FLAC(filepath)
+                
+                if audio.pictures:
+                    pic = audio.pictures[0]
+                    print(f"   ✅ FLAC-Picture gefunden: {len(pic.data)} Bytes")
+                    
+                    if HAS_PIL:
+                        try:
+                            image = Image.open(io.BytesIO(pic.data))
+                            image = image.convert("RGB")
+                            image.thumbnail((512, 512))
+                            image.save(thumbnail_path, "JPEG", quality=90)
+                            print(f"   ✅ FLAC-Cover gespeichert")
+                            return True
+                        except Exception as e:
+                            print(f"   ⚠️ PIL-Fehler: {e}")
+                            with open(thumbnail_path, 'wb') as f:
+                                f.write(pic.data)
+                            return True
+                    else:
+                        with open(thumbnail_path, 'wb') as f:
+                            f.write(pic.data)
+                        return True
+                
+                print(f"   ⚠️ Keine Pictures in FLAC")
+            except Exception as e:
+                print(f"   ⚠️ FLAC-Fehler: {e}")
+        
         # M4A/AAC: MP4 Atoms
         elif ext in (".m4a", ".aac"):
-            from mutagen.mp4 import MP4
-            audio = MP4(filepath)
-            if "covr" in audio:
-                cover = audio["covr"][0]
-                if HAS_PIL:
-                    image = Image.open(io.BytesIO(cover))
-                    image = image.convert("RGB")
-                    image.thumbnail((512, 512))
-                    image.save(thumbnail_path, "JPEG", quality=90)
-                else:
-                    with open(thumbnail_path, 'wb') as f:
-                        f.write(cover)
-                return True
-
+            try:
+                from mutagen.mp4 import MP4
+                print(f"   📁 MP4 Atoms prüfen...")
+                audio = MP4(filepath)
+                
+                if "covr" in audio:
+                    cover = audio["covr"][0]
+                    print(f"   ✅ MP4 'covr' Atom gefunden: {len(cover)} Bytes")
+                    
+                    if HAS_PIL:
+                        try:
+                            image = Image.open(io.BytesIO(cover))
+                            image = image.convert("RGB")
+                            image.thumbnail((512, 512))
+                            image.save(thumbnail_path, "JPEG", quality=90)
+                            print(f"   ✅ M4A-Cover gespeichert")
+                            return True
+                        except Exception as e:
+                            print(f"   ⚠️ PIL-Fehler: {e}")
+                            with open(thumbnail_path, 'wb') as f:
+                                f.write(cover)
+                            return True
+                    else:
+                        with open(thumbnail_path, 'wb') as f:
+                            f.write(cover)
+                        return True
+                
+                print(f"   ⚠️ Kein 'covr' Atom in MP4")
+            except Exception as e:
+                print(f"   ⚠️ MP4-Fehler: {e}")
+        
         # OGG: Base64 encoded
         elif ext == ".ogg":
-            from mutagen.oggvorbis import OggVorbis
-            audio = OggVorbis(filepath)
-            if "metadata_block_picture" in audio:
-                import base64
-                pic_data = base64.b64decode(audio["metadata_block_picture"][0])
-                if HAS_PIL:
-                    image = Image.open(io.BytesIO(pic_data))
-                    image = image.convert("RGB")
-                    image.thumbnail((512, 512))
-                    image.save(thumbnail_path, "JPEG", quality=90)
-                else:
-                    with open(thumbnail_path, 'wb') as f:
-                        f.write(pic_data)
-                return True
-
+            try:
+                from mutagen.oggvorbis import OggVorbis
+                print(f"   📁 OGG Vorbis-Comments prüfen...")
+                audio = OggVorbis(filepath)
+                
+                if "metadata_block_picture" in audio:
+                    import base64
+                    pic_data = base64.b64decode(audio["metadata_block_picture"][0])
+                    print(f"   ✅ OGG Picture gefunden: {len(pic_data)} Bytes")
+                    
+                    if HAS_PIL:
+                        try:
+                            image = Image.open(io.BytesIO(pic_data))
+                            image = image.convert("RGB")
+                            image.thumbnail((512, 512))
+                            image.save(thumbnail_path, "JPEG", quality=90)
+                            print(f"   ✅ OGG-Cover gespeichert")
+                            return True
+                        except Exception as e:
+                            print(f"   ⚠️ PIL-Fehler: {e}")
+                            with open(thumbnail_path, 'wb') as f:
+                                f.write(pic_data)
+                            return True
+                    else:
+                        with open(thumbnail_path, 'wb') as f:
+                            f.write(pic_data)
+                        return True
+                
+                print(f"   ⚠️ Kein metadata_block_picture in OGG")
+            except Exception as e:
+                print(f"   ⚠️ OGG-Fehler: {e}")
+        
+        print(f"   ❌ Keine Cover-Art gefunden in {os.path.basename(filepath)}")
         return False
         
     except Exception as e:
-        print(f"⚠️ Audio-Cover-Extraktion fehlgeschlagen: {e}")
+        print(f"⚠️ Audio-Cover-Extraktion fehlgeschlagen für {os.path.basename(filepath)}: {e}")
         return False
 
 def extract_mp4_cover(filepath, thumbnail_path):
     """
-    Extrahiert Cover-Art aus MP4-Dateien.
+    Extrahiert Cover-Art aus MP4-Dateien (Video und Audio).
     
     Args:
         filepath (str): Pfad zur MP4-Datei
@@ -2761,18 +2907,30 @@ def extract_mp4_cover(filepath, thumbnail_path):
         if not HAS_MUTAGEN:
             return False
         
+        print(f"🔍 Suche Cover in MP4: {os.path.basename(filepath)}")
+        
         mp4 = MP4(filepath)
         if 'covr' not in mp4:
+            print(f"   ⚠️ Kein 'covr' Atom in MP4")
             return False
 
         cover = mp4['covr'][0]
+        print(f"   ✅ MP4 Cover gefunden: {len(cover)} Bytes")
         
         if HAS_PIL:
-            image = Image.open(io.BytesIO(cover))
-            image = image.convert("RGB")
-            image.thumbnail((512, 512))
-            image.save(thumbnail_path, "JPEG", quality=90)
-            return True
+            try:
+                image = Image.open(io.BytesIO(cover))
+                image = image.convert("RGB")
+                image.thumbnail((512, 512))
+                image.save(thumbnail_path, "JPEG", quality=90)
+                print(f"   ✅ MP4-Cover gespeichert")
+                return True
+            except Exception as e:
+                print(f"   ⚠️ PIL-Fehler: {e}")
+                # Fallback: Direktes Schreiben
+                with open(thumbnail_path, 'wb') as f:
+                    f.write(cover)
+                return True
         else:
             # Direktes Schreiben ohne PIL
             with open(thumbnail_path, 'wb') as f:
@@ -2780,7 +2938,7 @@ def extract_mp4_cover(filepath, thumbnail_path):
             return True
             
     except Exception as e:
-        print(f"⚠️ MP4 Cover-Extraktion fehlgeschlagen: {e}")
+        print(f"⚠️ MP4 Cover-Extraktion fehlgeschlagen für {os.path.basename(filepath)}: {e}")
         return False
 
 def extract_non_black_video_frame(filepath, thumbnail_path):
@@ -2919,7 +3077,6 @@ def stream_video_transcoded(handler, filepath):
             handler.send_error(404, "Datei nicht gefunden")
             return
 
-        # HTTP-Header
         handler.send_response(200)
         handler.send_header("Content-Type", "video/mp4")
         handler.send_header("Cache-Control", "no-cache")
@@ -2928,26 +3085,51 @@ def stream_video_transcoded(handler, filepath):
         handler.end_headers()
         print("✅ Header gesendet")
 
-        # FFmpeg-Kommando für MKV mit Audio-Sprache
+        audio_language = get_setting('audio_language', 'ger')
+        ext = os.path.splitext(filepath)[1].lower()
+        
         cmd = [
             FFMPEG_EXECUTABLE,
             "-i", filepath,
         ]
         
-        # Audio-Sprache aus Settings für MKV-Dateien
-        audio_language = get_setting('audio_language', 'ger')
-        ext = os.path.splitext(filepath)[1].lower()
-        
-        if ext == '.mkv' and audio_language:
-            cmd.extend([
-                "-map", "0:v:0",
-                "-map", f"0:a:m:language:{audio_language}",
-                "-map", "0:a?",
-            ])
+        # 🔧 KORREKTUR: Prüfe VORHER ob die Sprache existiert
+        if ext == '.mkv' and audio_language and audio_language.strip():
+            # Versuche die Sprache zu finden
+            audio_map = f"0:a:m:language:{audio_language}"
+            
+            # Teste ob Sprache existiert
+            test_cmd = [
+                FFPROBE_EXECUTABLE,
+                "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream_tags=language",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filepath
+            ]
+            
+            try:
+                result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=3)
+                available_languages = result.stdout.strip().split('\n')
+                
+                if audio_language in available_languages:
+                    # Sprache vorhanden → nutze sie
+                    cmd.extend(["-map", "0:v:0", "-map", audio_map])
+                    print(f"   🎵 Audio-Sprache '{audio_language}' gefunden und ausgewählt")
+                else:
+                    # Sprache nicht vorhanden → erster Audio-Stream
+                    cmd.extend(["-map", "0:v:0", "-map", "0:a:0"])
+                    print(f"   ℹ️ Audio-Sprache '{audio_language}' nicht gefunden, nutze ersten Stream")
+                    print(f"   📋 Verfügbare Sprachen: {', '.join(available_languages) if available_languages else 'keine Tags'}")
+                    
+            except Exception as e:
+                # Fallback bei Fehler
+                cmd.extend(["-map", "0:v:0", "-map", "0:a:0"])
+                print(f"   ⚠️ Sprach-Prüfung fehlgeschlagen: {e}")
         else:
-            cmd.extend(["-map", "0:v:0", "-map", "0:a?"])
+            cmd.extend(["-map", "0:v:0", "-map", "0:a:0"])
         
-        # Video-Encoding-Einstellungen
+        # Rest bleibt UNVERÄNDERT
         cmd.extend([
             "-c:v", "libx264",
             "-preset", "ultrafast",
@@ -2969,9 +3151,8 @@ def stream_video_transcoded(handler, filepath):
             "pipe:1"
         ])
         
-        print(f"   🚀 FFmpeg Kommando: {' '.join(cmd[:8])}...")
+        print(f"   🚀 FFmpeg Kommando: {' '.join(cmd[:10])}...")
 
-        # Streaming mit Context Manager
         with FFmpegProcess(cmd, timeout=300) as process:
             bytes_sent = 0
             chunks_sent = 0
@@ -2999,7 +3180,7 @@ def stream_video_transcoded(handler, filepath):
                             print(f"   📊 Gesendet: {bytes_sent / (1024*1024):.1f} MB")
                             
                     except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                        print(f"⚠️ Client hat Verbindung getrennt nach {bytes_sent / (1024*1024):.1f} MB")
+                        print(f"ℹ️ Client hat Verbindung getrennt nach {bytes_sent / (1024*1024):.1f} MB")
                         break
             
             except Exception as e:
@@ -3011,7 +3192,6 @@ def stream_video_transcoded(handler, filepath):
         print(f"❌ Kritischer Fehler: {e}")
         import traceback
         traceback.print_exc()
-
 
 # -----------------------------------------------------------------------------
 # DATENBANK CONNECTION MANAGEMENT - Memory-Leak Prevention
@@ -3104,18 +3284,30 @@ class FFmpegProcess:
         cmd_display = ' '.join(cmd_strs[:10]) + ('...' if len(cmd_strs) > 10 else '')
         print(f"   FFmpeg Befehl: {cmd_display}")
         
-        # WICHTIG: Keine shell=True, keine manuellen Anführungszeichen!
-        # subprocess kümmert sich selbst um Pfade mit Leerzeichen
+        # WICHTIG: stderr=PIPE für Fehlererkennung
         self.process = subprocess.Popen(
             cmd_strs,  # Liste von Strings ohne extra Anführungszeichen
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,  # ÄNDERUNG: Fehlerausgabe lesbar
             stdin=subprocess.DEVNULL,
             startupinfo=self.startupinfo,
             creationflags=self.creationflags,
             bufsize=8192,
             shell=False  # KEIN shell=True!
         )
+        
+        # Starte einen Thread um stderr zu lesen (für Debugging)
+        def read_stderr():
+            try:
+                for line in iter(self.process.stderr.readline, b''):
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                    if line_str and 'error' in line_str.lower():
+                        print(f"   ⚠️ FFmpeg Fehler: {line_str[:100]}")
+            except:
+                pass
+        
+        threading.Thread(target=read_stderr, daemon=True).start()
+        
         return self.process
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -3182,9 +3374,21 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
     }
 
     def log_message(self, format, *args):
-        """Nur Nicht-200-Requests loggen."""
-        if args[1] != '200':
-            super().log_message(format, *args)
+        """Überschreibe Logging um störende Fehler zu filtern."""
+        # Filtere normale Client-Abbrüche
+        if len(args) >= 2 and args[1] in ['200', '206', '304']:
+            return  # Kein Logging für erfolgreiche Requests
+        
+        # Filtere bestimmte Fehlermeldungen
+        msg = format % args
+        if any(x in msg for x in ['10053', '10054', '10038', 'WinError', 'Connection aborted']):
+            return  # Kein Logging für Socket-Fehler
+        
+        # Logge nur echte Fehler
+        super().log_message(format, *args)
+        
+        # Logge nur echte Fehler
+        super().log_message(format, *args)
 
     def do_GET(self):
         """Haupt-GET-Handler für alle HTTP-Anfragen."""
@@ -3346,7 +3550,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Empty file")
                 return
             
-            # Range-Header parsen: "bytes=start-end" oder "bytes=start-"
+            # Range-Header parsen
             range_match = re.match(r'bytes=(\d+)-(\d*)', range_header)
             if not range_match:
                 print(f"⚠️ Ungültiger Range-Header: {range_header}")
@@ -3356,13 +3560,11 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             start = int(range_match.group(1))
             end_str = range_match.group(2)
             
-            # ENDE KORRIGIERT: Wenn kein Ende angegeben, bis zum Dateiende
             if end_str:
                 end = int(end_str)
                 if end >= file_size:
                     end = file_size - 1
             else:
-                # "bytes=1109229568-" → bis zum Dateiende
                 end = file_size - 1
             
             # Grenzen validieren
@@ -3380,15 +3582,15 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             
             print(f"   📊 Range-Request: {start}-{end} ({length / 1024:.1f}KB von {file_size / (1024*1024):.1f}MB)")
             
-            # ADAPTIVE CHUNK-GRÖSSE für Range-Requests
-            if length > 100 * 1024 * 1024:  # >100MB
-                chunk_size = 2 * 1024 * 1024  # 2MB
-            elif length > 10 * 1024 * 1024:  # >10MB
-                chunk_size = 1 * 1024 * 1024  # 1MB
+            # Adaptive Chunk-Größe
+            if length > 100 * 1024 * 1024:
+                chunk_size = 2 * 1024 * 1024
+            elif length > 10 * 1024 * 1024:
+                chunk_size = 1 * 1024 * 1024
             else:
-                chunk_size = 256 * 1024  # 256KB
+                chunk_size = 256 * 1024
             
-            # Partial Content Response mit optimierten Headers
+            # Partial Content Response
             self.send_response(206)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(length))
@@ -3396,18 +3598,14 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.send_header('X-Content-Type-Options', 'nosniff')
-            self.send_header('Connection', 'keep-alive')
             self.end_headers()
             
-            # OPTIMIERTES RANGE-STREAMING MIT BESSEREM ERROR-HANDLING
+            # OPTIMIERTES STREAMING MIT ROBUSTEM ERROR-HANDLING
             bytes_sent = 0
             try:
                 with open(filepath, 'rb') as f:
                     f.seek(start)
                     remaining = length
-                    
-                    last_flush_time = time.time()
-                    flush_interval = 0.05  # Alle 50ms flushen
                     
                     while remaining > 0:
                         chunk = f.read(min(chunk_size, remaining))
@@ -3417,32 +3615,36 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                             
                         try:
                             self.wfile.write(chunk)
-                            self.wfile.flush()  # SOFORTIGES FLUSH nach jedem Chunk!
+                            self.wfile.flush()
                             bytes_sent += len(chunk)
                             remaining -= len(chunk)
                             
-                            # Fortschritt anzeigen
+                            # Fortschritt anzeigen (nur für größere Dateien)
                             if length > 10 * 1024 * 1024 and bytes_sent % (10 * 1024 * 1024) < chunk_size:
                                 percent = (bytes_sent / length) * 100
                                 print(f"   📈 Range-Fortschritt: {bytes_sent / 1024:.1f}KB ({percent:.1f}%)")
                                 
-                        except (ConnectionAbortedError, BrokenPipeError, OSError) as e:
-                            # NORMALER ABBRUCH - Benutzer hat Video gestoppt/geskippt
-                            print(f"ℹ️ Client hat Streaming gestoppt: {bytes_sent / 1024:.1f}KB gesendet")
-                            return  # SILENT RETURN - kein Error werfen!
-                
-                print(f"✅ Range vollständig gesendet: {bytes_sent / 1024:.1f}KB")
-                
+                        except (ConnectionAbortedError, BrokenPipeError, OSError, ConnectionResetError) as e:
+                            # NORMALER ABBRUCH - Client hat Video gestoppt/geskippt
+                            print(f"ℹ️ Client-Verbindung abgebrochen: {bytes_sent / 1024:.1f}KB gesendet")
+                            return  # KEIN ERROR - einfach beenden
+                        
+                        except Exception as e:
+                            print(f"⚠️ Unerwarteter Fehler beim Senden: {e}")
+                            return  # Beenden bei unbekannten Fehlern
+                    
+                    print(f"✅ Range vollständig gesendet: {bytes_sent / 1024:.1f}KB")
+                    
             except Exception as e:
                 print(f"⚠️ Datei-Lesefehler: {e}")
                 # Kein send_error() hier - Client hat bereits Response-Headers bekommen
-            
+                
         except Exception as e:
             print(f"❌ Range-Request Setup Fehler: {e}")
             import traceback
             traceback.print_exc()
             self.send_error(500, "Internal Server Error")
-
+        
     def handle_media_request(self, query_params):
         """Verarbeitet Media-Streaming-Anfragen."""
         filepath = query_params.get('filepath', [None])[0]
@@ -3573,7 +3775,22 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
 
         thumb_path = os.path.join(THUMBNAIL_DIR, thumb_name)
         if os.path.isfile(thumb_path):
-            self.serve_file(thumb_path, 'image/jpeg')
+            try:
+                with open(thumb_path, 'rb') as f:
+                    data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'public, max-age=31536000')  # 1 Jahr Cache
+                    self.send_header('Expires', 'Fri, 01 Jan 2026 00:00:00 GMT')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    print(f"✅ Statisches Thumbnail: {thumb_name}")
+            except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
+                # Client-Abbruch ignorieren
+                print(f"ℹ️ Client-Abbruch bei statischem Thumbnail")
+            except Exception as e:
+                print(f"⚠️ Statisches Thumbnail-Fehler: {e}")
         else:
             self.send_error(404, "Thumbnail nicht gefunden")
 
@@ -4267,8 +4484,11 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
 
             base_content_type = content_type.split(';')[0].strip()
             
-            # OPTIMIERTE ADAPTIVE CHUNK-GRÖSSE
-            if base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
+            # Adaptive Chunk-Größe - BESONDERE BEHANDLUNG FÜR KLEINE DATEIEN (Thumbnails)
+            if file_size < 100 * 1024:  # Kleine Dateien (< 100KB) komplett senden
+                chunk_size = file_size  # Ein Chunk für alles
+                print(f"   📊 Kleine Datei: {os.path.basename(filepath)} ({file_size / 1024:.1f}KB)")
+            elif base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
                 if file_size > 5 * 1024 * 1024 * 1024:  # >5GB
                     chunk_size = 2 * 1024 * 1024  # 2MB
                 elif file_size > 1 * 1024 * 1024 * 1024:  # >1GB
@@ -4278,7 +4498,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             else:
                 chunk_size = 256 * 1024  # 256KB
             
-            print(f"   📊 Streaming: {os.path.basename(filepath)} ({file_size / (1024*1024):.1f}MB) - Chunk: {chunk_size/1024:.0f}KB")
+            print(f"   📊 Streaming: {os.path.basename(filepath)} ({file_size / (1024*1024):.1f}MB)")
             
             # Headers senden
             self.send_response(200)
@@ -4286,53 +4506,68 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(file_size))
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('X-Content-Type-Options', 'nosniff')
-            self.send_header('Connection', 'keep-alive')
             
-            # Cache-Strategie
-            if base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
+            # Cache-Strategie - WICHTIG: Thumbnails lange cachen
+            if base_content_type.startswith('image/'):
+                self.send_header('Cache-Control', 'public, max-age=31536000')  # 1 Jahr Cache
+                self.send_header('Expires', 'Fri, 01 Jan 2026 00:00:00 GMT')
+            elif base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
                 self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            elif base_content_type.startswith('image/'):
-                self.send_header('Cache-Control', 'public, max-age=86400')
             else:
                 self.send_header('Cache-Control', 'private, max-age=3600')
             
             self.end_headers()
             
-            # OPTIMIERTES STREAMING MIT BESSEREM ERROR-HANDLING
+            # ROBUSTES STREAMING - SPEZIALBEHANDLUNG FÜR KLEINE DATEIEN
             bytes_sent = 0
             try:
                 with open(filepath, 'rb') as f:
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        
+                    # Für kleine Dateien: Einmalig komplett lesen
+                    if file_size < 100 * 1024:
                         try:
-                            self.wfile.write(chunk)
-                            bytes_sent += len(chunk)
-                            
-                            # SOFORT FLUSHEN nach jedem Chunk!
+                            data = f.read()
+                            self.wfile.write(data)
                             self.wfile.flush()
-                                
-                        except (ConnectionAbortedError, BrokenPipeError, OSError) as e:
-                            # NORMAL - Client hat Verbindung geschlossen
-                            print(f"ℹ️ Client hat Verbindung geschlossen: {bytes_sent / (1024*1024):.1f}MB gesendet")
-                            return  # SILENT RETURN!
-                
-                print(f"✅ Datei vollständig gesendet: {os.path.basename(filepath)} ({bytes_sent / (1024*1024):.1f} MB)")
+                            bytes_sent = len(data)
+                            print(f"✅ {os.path.basename(filepath)} komplett gesendet: {bytes_sent / 1024:.1f}KB")
+                        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
+                            # Client-Abbruch bei kleinen Dateien ignorieren
+                            return
+                    else:
+                        # Normales Streaming für große Dateien
+                        while True:
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            
+                            try:
+                                self.wfile.write(chunk)
+                                bytes_sent += len(chunk)
+                                self.wfile.flush()
+                                    
+                            except (ConnectionAbortedError, BrokenPipeError, 
+                                    ConnectionResetError, OSError):
+                                # Client hat Verbindung abgebrochen - normal bei Browsern
+                                print(f"ℹ️ Client-Abbruch: {os.path.basename(filepath)}")
+                                return
+                            
+                            except Exception as e:
+                                print(f"⚠️ Sendefehler: {e}")
+                                return
+                        
+                        if bytes_sent > 0:
+                            print(f"✅ {os.path.basename(filepath)} gesendet: {bytes_sent / (1024*1024):.1f}MB")
 
             except Exception as e:
                 print(f"⚠️ Datei-Lesefehler: {e}")
-                # Kein send_error() - Headers bereits gesendet
-            
+                
         except Exception as e:
-            print(f"❌ Kritischer Fehler in serve_file(): {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Fehler in serve_file(): {e}")
             try:
-                self.send_error(500, "Interner Fehler")
+                if not self.headers_sent:
+                    self.send_error(500, "Interner Fehler")
             except:
-                pass  # Client hat Verbindung bereits geschlossen
+                pass
 
     def serve_color_thumbnail(self, filepath):
         """Liefert farbiges Fallback-Thumbnail als SVG."""
@@ -4357,18 +4592,16 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             self.wfile.write(svg_bytes)
+            print(f"✅ SVG-Thumbnail gesendet für: {os.path.basename(filepath)}")
 
-        except ConnectionAbortedError:
-            print("ℹ️ SVG-Thumbnail-Request vom Client abgebrochen")
-            return
-        except BrokenPipeError:
-            print("ℹ️ Broken Pipe bei SVG-Thumbnail")
-            return
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
+            # Client-Abbruch ignorieren
+            print(f"ℹ️ Client-Abbruch bei SVG-Thumbnail")
         except Exception as e:
-            print(f"❌ Fehler beim Ausliefern des SVG-Thumbnails: {e}")
+            print(f"❌ Fehler beim SVG-Thumbnail: {e}")
             try:
                 self.send_error(500, "Interner Fehler")
-            except Exception:
+            except:
                 pass
 
     def clear_thumbnail_cache(self):
@@ -7729,13 +7962,60 @@ class MediaHTTPRequestHandler(ExtendedMediaHTTPRequestHandler):
             self.send_error(403, "Ungültiger Pfad")
             return
 
+        # In Datenbank prüfen
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM media_files WHERE filepath = ?",
+                (filepath,)
+            )
+            result = cursor.fetchone()[0]
+            conn.close()
+
+            if result == 0:
+                print(f"⛔ Thumbnail für nicht-indexierte Datei: {os.path.basename(filepath)}")
+                self.send_error(403, "Datei nicht in der Datenbank")
+                return
+        except Exception as e:
+            print(f"⚠️ Datenbankfehler: {e}")
+
         # Thumbnail generieren oder holen
         thumb_path = generate_or_get_thumbnail(filepath)
 
         if thumb_path and os.path.exists(thumb_path):
-            self.serve_file(thumb_path, 'image/jpeg')
+            # WICHTIG: Bessere Cache-Header für Thumbnails
+            try:
+                with open(thumb_path, 'rb') as f:
+                    data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'public, max-age=31536000')  # 1 Jahr
+                    self.send_header('Expires', 'Fri, 01 Jan 2026 00:00:00 GMT')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    print(f"✅ Thumbnail gesendet: {os.path.basename(filepath)}")
+            except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
+                # Client-Abbruch ignorieren
+                print(f"ℹ️ Client-Abbruch bei Thumbnail: {os.path.basename(filepath)}")
+            except Exception as e:
+                print(f"⚠️ Thumbnail-Sendefehler: {e}")
         else:
             self.serve_color_thumbnail(filepath)
+
+    def handle_one_request(self):
+        """Überschreibe handle_one_request um Socket-Fehler abzufangen."""
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            # Client hat Verbindung abgebrochen - das ist normal
+            print(f"ℹ️ Client-Verbindungsfehler: {e}")
+            return  # Einfach zurückkehren statt Fehler zu werfen
+        except Exception as e:
+            print(f"⚠️ Unerwarteter Fehler in handle_one_request: {e}")
+            import traceback
+            traceback.print_exc()
 
 # -----------------------------------------------------------------------------
 # SERVER-KONFIGURATION
@@ -7933,7 +8213,7 @@ def start_http_server():
     
     # 6. Server starten
     try:
-        server = HTTPServer((host, SERVER_PORT), ExtendedMediaHTTPRequestHandler)
+        server = RobustHTTPServer((host, SERVER_PORT), ExtendedMediaHTTPRequestHandler)
         
         # Browser öffnen (nur bei localhost)
         if host == 'localhost':
@@ -8123,7 +8403,34 @@ def main():
         print("✅ Server sauber beendet.")
         print("=" * 70)
 
-
+class RobustHTTPServer(HTTPServer):
+    """HTTP-Server mit verbessertem Error-Handling."""
+    
+    def handle_error(self, request, client_address):
+        """Überschreibe Error-Handling um Socket-Fehler zu ignorieren."""
+        error_type, error_value, _ = sys.exc_info()
+        
+        # Ignoriere normale Socket-Fehler (Client-Abbrüche)
+        socket_errors = [
+            ConnectionResetError, ConnectionAbortedError, 
+            BrokenPipeError, OSError, TimeoutError
+        ]
+        
+        for error in socket_errors:
+            if error_type == error:
+                err_msg = str(error_value)
+                # Windows Socket-Fehler-Codes ignorieren
+                if any(str(code) in err_msg for code in [10053, 10054, 10038, 10004]):
+                    print(f"ℹ️ Client {client_address[0]}:{client_address[1]} hat Verbindung abgebrochen")
+                    return
+                else:
+                    print(f"⚠️ Socket-Fehler mit Client {client_address[0]}: {err_msg}")
+                    return
+        
+        # Für alle anderen Fehler: Standard-Verhalten
+        print(f"❌ Server-Fehler mit Client {client_address[0]}: {error_type.__name__}: {error_value}")
+        import traceback
+        traceback.print_exc()
 # -----------------------------------------------------------------------------
 # HAUPTPROGRAMM
 # -----------------------------------------------------------------------------
