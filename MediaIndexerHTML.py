@@ -88,8 +88,6 @@ KORREKTUR-PRÄMISSEN (NICHT VERLETZEN!):
 
     ✅ PRAXIS-ORIENTIERT: Lösungen für reale Probleme, nicht theoretische Optimierungen
 
-    ✅ KORREKTUR-AUSGABEN: Ganze Definitionen, ohne Abkürzungen!
-
 CHANGELOG 1.0:
 
 • Network Sharing aktivierbar/deaktivierbar
@@ -2987,7 +2985,7 @@ def extract_non_black_video_frame(filepath, thumbnail_path):
                     pixels = list(img.getdata())
                     avg_brightness = sum(pixels) / len(pixels)
 
-                    if avg_brightness > 5: #Nur absolut schwarze Bilder zu fa-Bildern
+                    if avg_brightness > 20:
                         return True
             except Exception as e:
                 print(f"⚠️ Bild-Analyse fehlgeschlagen: {e}")
@@ -3689,7 +3687,7 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Datei nicht gefunden")
             return
 
-        # MIME-Type frühzeitig bestimmen (FIX für Scope-Problem!)
+        # MIME-Type frühzeitig bestimmen
         ext = os.path.splitext(filepath)[1].lower()
         mime_type, _ = mimetypes.guess_type(filepath)
         if not mime_type:
@@ -3698,7 +3696,24 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         print(f"   📁 Dateiendung: {ext}")
         print(f"   🎯 MIME-Type: {mime_type}")
 
-        # Range-Header frühzeitig prüfen (für alle Dateien)
+        # AUDIO-DATEIEN - KORREKTUR HIER
+        audio_exts = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma']
+        if ext in audio_exts:
+            print(f"🎵 Audio-Datei erkannt: {os.path.basename(filepath)}")
+            
+            # Range-Header prüfen für Audio
+            range_header = self.headers.get('Range')
+            if range_header:
+                print(f"🎯 Range-Request für Audio: {range_header}")
+                self.handle_range_request(filepath, mime_type, range_header)
+                return
+            
+            # Direktes Streaming für Audio
+            print(f"📤 Direktes Audio-Streaming: {os.path.basename(filepath)}")
+            self.serve_file(filepath, mime_type)
+            return
+
+        # Range-Header frühzeitig prüfen (für alle anderen Dateien)
         range_header = self.headers.get('Range')
         
         # Immer transcodieren: MKV, AVI, WMV, etc.
@@ -3767,6 +3782,10 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             print(f"📤 Direktes Streaming: {os.path.basename(filepath)}")
             self.serve_file(filepath, mime_type)
             return
+
+        # Fallback für alle anderen Dateien
+        print(f"📁 Allgemeine Datei: {os.path.basename(filepath)}")
+        self.serve_file(filepath, mime_type)
 
     def handle_static_thumbnail(self, path):
         """Liefert statische Thumbnails aus Cache."""
@@ -7571,22 +7590,6 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             loadSettings(); // Ersetzt loadAutoplaySetting()
             showHome();
         }});
-
-        document.addEventListener('DOMContentLoaded', function() {{
-            fetch('/api/settings')
-            .then(r => r.json())
-            .then(data => {{
-                if (data.success && data.settings.volume_level) {{
-                    const vol = parseFloat(data.settings.volume_level);
-                    const slider = document.querySelector('.volume-slider');
-                    if (slider) {{
-                        slider.value = Math.round(vol * 100);
-                        if (window.videoPlayer) window.videoPlayer.volume = vol;
-                        if (window.audioPlayer) window.audioPlayer.volume = vol;
-                    }}
-                }}
-            }});
-        }});
     </script>
 </body>
 </html>'''
@@ -7619,11 +7622,9 @@ def generate_web_interface():
     Hauptfunktion zur Generierung des Web-Interfaces.
     Lädt Daten, bereitet sie auf und generiert HTML.
     """
-    # Prüfe ob Haupt-DB existiert
     if not os.path.exists(DB_PATH):
-        print(f"❌ Hauptdatenbank {DB_PATH} nicht gefunden!")
-        print("   Führen Sie zuerst den Media Indexer aus.")
-        return False
+        print("❌ Hauptdatenbank nicht gefunden.")
+        return
 
     # Settings-DB initialisieren
     if not os.path.exists(SETTINGS_DB_PATH):
