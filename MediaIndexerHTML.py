@@ -2987,7 +2987,7 @@ def extract_non_black_video_frame(filepath, thumbnail_path):
                     pixels = list(img.getdata())
                     avg_brightness = sum(pixels) / len(pixels)
 
-                    if avg_brightness > 5:
+                    if avg_brightness > 5: #Nur absolut schwarze Bilder zu fa-Bildern
                         return True
             except Exception as e:
                 print(f"⚠️ Bild-Analyse fehlgeschlagen: {e}")
@@ -7570,6 +7570,22 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             initDarkMode();
             loadSettings(); // Ersetzt loadAutoplaySetting()
             showHome();
+        }});
+
+        document.addEventListener('DOMContentLoaded', function() {{
+            fetch('/api/settings')
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success && data.settings.volume_level) {{
+                    const vol = parseFloat(data.settings.volume_level);
+                    const slider = document.querySelector('.volume-slider');
+                    if (slider) {{
+                        slider.value = Math.round(vol * 100);
+                        if (window.videoPlayer) window.videoPlayer.volume = vol;
+                        if (window.audioPlayer) window.audioPlayer.volume = vol;
+                    }}
+                }}
+            }});
         }});
     </script>
 </body>
