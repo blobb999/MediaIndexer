@@ -88,6 +88,8 @@ KORREKTUR-PRÄMISSEN (NICHT VERLETZEN!):
 
     ✅ PRAXIS-ORIENTIERT: Lösungen für reale Probleme, nicht theoretische Optimierungen
 
+    ✅ KORREKTUR-AUSGABEN: Ganze Definitionen, ohne Abkürzungen!
+
 CHANGELOG 1.0:
 
 • Network Sharing aktivierbar/deaktivierbar
@@ -2985,7 +2987,7 @@ def extract_non_black_video_frame(filepath, thumbnail_path):
                     pixels = list(img.getdata())
                     avg_brightness = sum(pixels) / len(pixels)
 
-                    if avg_brightness > 20:
+                    if avg_brightness > 5:
                         return True
             except Exception as e:
                 print(f"⚠️ Bild-Analyse fehlgeschlagen: {e}")
@@ -7601,9 +7603,11 @@ def generate_web_interface():
     Hauptfunktion zur Generierung des Web-Interfaces.
     Lädt Daten, bereitet sie auf und generiert HTML.
     """
+    # Prüfe ob Haupt-DB existiert
     if not os.path.exists(DB_PATH):
-        print("❌ Hauptdatenbank nicht gefunden.")
-        return
+        print(f"❌ Hauptdatenbank {DB_PATH} nicht gefunden!")
+        print("   Führen Sie zuerst den Media Indexer aus.")
+        return False
 
     # Settings-DB initialisieren
     if not os.path.exists(SETTINGS_DB_PATH):
