@@ -74,48 +74,34 @@ ZIELGRUPPE (EXPLIZIT DOCH):
 • Lokale Netzwerke
 • Technische Laien - Binary starten, kein Setup, WebUI selbsterklärend.
 
-KORREKTUR-PRÄMISSEN (NICHT VERLETZEN!):
 
-    ✅ PROBLEM-LÖSUNG: Nur bestehende Probleme korrigieren, keine neuen Features
+KORREKTUR-PRÄMISSEN (EXPLIZIT & UNABHÄNGBAR)
 
-    ✅ MINIMAL-ÄNDERUNG: Kleinstmögliche Korrekturen am bestehenden Code
+    ✅ PROBLEM-LÖSUNG: Nur bestehende, nachgewiesene Probleme korrigieren. Keine neuen Features oder "Verbesserungen" ohne konkreten Fehler.
 
-    ✅ KEIN OVER-ENGINEERING: Keine komplexen Refactorings oder Architektur-Änderungen
+    ✅ MINIMAL-ÄNDERUNG: Absolute Minimallösung. Jede Änderung muss zwingend notwendig sein. Kein "könnte man auch", "wäre besser", "sollte man".
 
-    ✅ FUNKTIONS-ERHALTUNG: Bestehende Funktionen beibehalten, nicht ersetzen
+    ✅ KEIN OVER-ENGINEERING: Keine Refactorings, keine Architektur-Änderungen, keine "saubereren" Lösungen. Existierender Code bleibt unverändert außer für die exakte Fehlerbehebung.
 
-    ✅ STABILITÄT ZUERST: Robuster Betrieb hat Priorität über alles andere
+    ✅ FUNKTIONS-ERHALTUNG: Alle bestehenden Funktionen bleiben 100% erhalten. Keine Logik entfernen, keine Bedingungen ändern, keine Features reduzieren oder erweitern.
 
-    ✅ PRAXIS-ORIENTIERT: Lösungen für reale Probleme, nicht theoretische Optimierungen
+    ✅ STABILITÄT ZUERST: Nichts kaputt machen. Korrektur muss rückwärtskompatibel sein und darf keine Regressionen einführen.
 
-CHANGELOG 1.0:
+    ✅ PRAXIS-ORIENTIERT: Nur reale, aktuelle Probleme lösen. Nicht theoretische Optimierungen, nicht "für die Zukunft", nicht "vorsorglich".
 
-• Network Sharing aktivierbar/deaktivierbar
-• Single Filter Button (oben rechts)
-• History: Letzte 10 Filme mit Resume
-• Alle Settings in Datenbank gesichert
-• Autoplay stoppt jetzt korrekt
-• Audio-Volume-Slider hinzugefügt
-• Lautstärke-Persistenz
-• MKV Audio-Sprache Einstellungen
-• THUMBNAIL-FIX: Kleine Dateien komplett senden statt chunking
-• THUMBNAIL-FIX: Bessere Cache-Header (1 Jahr)
-• THUMBNAIL-FIX: Client-Abbruch Fehler unterdrückt
-• LOGGING-FIX: Störende Socket-Fehler nicht mehr geloggt
+    ✅ KORREKTUR-AUSGABEN: Niemals abkürzen! Immer vollständige Funktionen zeigen. Immer beide Versionen (vorher/nachher). Immer alle betroffenen Teile.
 
-SYSTEMARCHITEKTUR ERWEITERT:
+KONKRETE ANWENDUNGSREGELN FÜR DIESES PROJEKT:
 
-    Netzwerk-Modus: Localhost vs. 0.0.0.0 wählbar
+BEI CODE-PRÄSENTATION:
 
-    Multi-Client Support mit Limitierung
+    Immer vollständige Funktion zeigen, nicht Ausschnitte
 
-    Playback-History mit Timestamps
+    Immer f-string escapes wie im Projekt: {{ und }}
 
-    Settings-Persistenz in separater DB
+    Immer beide Versionen wenn relevant
 
-    Verbessertes Audio/Video-Player
-
-    Robuste Thumbnail-Auslieferung
+    Immer alle betroffenen Dateien/Zeilen benennen
     """
 
 import os
@@ -347,13 +333,18 @@ DEFAULT_SETTINGS = {
 active_clients = {}  # {ip: last_seen_timestamp}
 CLIENT_TIMEOUT = 300  # 5 Minuten Inaktivität = Session-Ende
 
+# In der Funktion init_settings_database():
+# Ändere die Tabelle playback_history - LETZTE POSITION IST IN SEKUNDEN, NICHT PROZENT
+# Die Tabelle bleibt wie sie ist (last_position in Sekunden ist bereits korrekt)
+# Nur die Anzeige/Logik muss angepasst werden
+
 def init_settings_database():
     """
     Erstellt Settings-Datenbank mit allen konfigurierbaren Optionen.
     
     Tabellen:
     - settings: Key-Value Store für globale Settings
-    - playback_history: Abspiel-Historie mit Resume-Points
+    - playback_history: Abspiel-Historie mit Resume-Points (last_position in Sekunden)
     - filter_presets: Gespeicherte Filter-Kombinationen
     """
     try:
@@ -369,15 +360,15 @@ def init_settings_database():
             )
         ''')
         
-        # Playback History
+        # Playback History (last_position in SEKUNDEN, nicht Prozent!)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS playback_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filepath TEXT NOT NULL,
                 filename TEXT,
                 category TEXT,
-                last_position INTEGER DEFAULT 0,
-                duration INTEGER DEFAULT 0,
+                last_position INTEGER DEFAULT 0,  -- IN SEKUNDEN
+                duration INTEGER DEFAULT 0,       -- IN SEKUNDEN
                 completed BOOLEAN DEFAULT 0,
                 last_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 play_count INTEGER DEFAULT 1
@@ -567,7 +558,6 @@ def safe_get_resume_point(filepath):
 def add_to_history(filepath, filename, category, position=0, duration=0, completed=False):
     """
     Fügt Abspiel-Event zur History hinzu oder aktualisiert bestehenden Eintrag.
-    MIT AUTOMATISCHER DATENBANK-REPARATUR.
     """
     try:
         # Prüfe ob History aktiviert ist
@@ -580,6 +570,10 @@ def add_to_history(filepath, filename, category, position=0, duration=0, complet
             if not os.path.exists(SETTINGS_DB_PATH):
                 return False
         
+        # WICHTIG: Konvertiere None zu 0 und stelle sicher, dass es numerisch ist
+        position = float(position) if position is not None else 0
+        duration = float(duration) if duration is not None else 0
+        
         conn = sqlite3.connect(SETTINGS_DB_PATH)
         cursor = conn.cursor()
         
@@ -591,6 +585,30 @@ def add_to_history(filepath, filename, category, position=0, duration=0, complet
             init_settings_database()
             conn = sqlite3.connect(SETTINGS_DB_PATH)
             cursor = conn.cursor()
+        
+        # WICHTIG: Wenn duration=0 oder None, versuche Dauer aus der Datei zu ermitteln
+        if duration <= 0:
+            # Versuche Dauer mit FFprobe zu ermitteln (für Video/Audio)
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext in VIDEO_EXTENSIONS or ext in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
+                try:
+                    if FFPROBE_EXECUTABLE:
+                        cmd = [
+                            FFPROBE_EXECUTABLE,
+                            '-v', 'error',
+                            '-show_entries', 'format=duration',
+                            '-of', 'default=noprint_wrappers=1:nokey=1',
+                            filepath
+                        ]
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0 and result.stdout.strip():
+                            duration = float(result.stdout.strip())
+                            print(f"📊 Dauer ermittelt für {os.path.basename(filepath)}: {duration:.1f}s")
+                except Exception as e:
+                    print(f"⚠️ Dauer-Erkennung fehlgeschlagen: {e}")
+        
+        # Mindestens 1 Sekunde Dauer, um Division durch 0 zu vermeiden
+        duration = max(duration, 1.0)
         
         # Prüfen ob Eintrag existiert
         cursor.execute('SELECT id, play_count FROM playback_history WHERE filepath = ?', (filepath,))
@@ -645,7 +663,6 @@ def add_to_history(filepath, filename, category, position=0, duration=0, complet
         print(f"⚠️ History-Update fehlgeschlagen: {e}")
         return False
 
-
 def get_history(limit=10):
     """Holt die letzten N abgespielten Medien."""
     try:
@@ -672,7 +689,7 @@ def get_resume_point(filepath):
     Holt Resume-Point für eine Datei mit automatischer DB-Reparatur.
     
     Returns:
-        dict: {'position': seconds, 'duration': seconds, 'percentage': float}
+        dict: {'position': seconds, 'duration': seconds, 'timestamp': 'hh:mm:ss', 'percentage': float}
         oder None wenn nicht vorhanden
     """
     try:
@@ -696,6 +713,19 @@ def get_resume_point(filepath):
         
         if result and result[0] > 0 and not result[2]:  # Position > 0 und nicht completed
             position, duration, _ = result
+            
+            # Konvertiere Sekunden in hh:mm:ss Format
+            def format_timestamp(seconds):
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                if hours > 0:
+                    return f"{hours}:{minutes:02d}:{secs:02d}"
+                else:
+                    return f"{minutes}:{secs:02d}"
+            
+            timestamp_str = format_timestamp(position)
+            total_timestamp_str = format_timestamp(duration) if duration > 0 else "0:00"
             percentage = (position / duration * 100) if duration > 0 else 0
             
             # Nur anbieten wenn > 5% und < 90% geschaut
@@ -703,6 +733,8 @@ def get_resume_point(filepath):
                 return {
                     'position': position,
                     'duration': duration,
+                    'timestamp': timestamp_str,
+                    'total_timestamp': total_timestamp_str,
                     'percentage': percentage
                 }
         
@@ -1841,6 +1873,15 @@ def enrich_media_data(media_dict, use_cache=True):
         update_hierarchy_cache(media_dict)
     except Exception as e:
         print(f"⚠️ Cache-Update fehlgeschlagen: {e}")
+    
+    resume_point = get_resume_point(filepath)
+    if resume_point:
+        media_dict['hasResume'] = True
+        media_dict['resumePosition'] = resume_point['position']
+        media_dict['resumeTimestamp'] = resume_point['timestamp']  # NEU: Timestamp statt Prozent
+        # Altes Prozent-Feld entfernen
+        if 'resumePercentage' in media_dict:
+            del media_dict['resumePercentage']
     
     return media_dict
 
@@ -4402,21 +4443,6 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({'success': False, 'error': str(e)}, 500)
     
-    def handle_api_history(self, query_params):
-        """GET /api/history - Abspiel-Historie abrufen."""
-        try:
-            limit = int(query_params.get('limit', [10])[0])
-            history = get_history(limit)
-            
-            self.send_json_response({
-                'success': True,
-                'history': history,
-                'count': len(history)
-            })
-            
-        except Exception as e:
-            self.send_json_response({'success': False, 'error': str(e)}, 500)
-    
     def handle_api_resume(self, query_params):
         """GET /api/resume?filepath=... - Resume-Point abrufen."""
         try:
@@ -4443,6 +4469,30 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({'success': False, 'error': str(e)}, 500)
     
+    def handle_api_history(self, query_params):
+        """GET /api/history - Abspiel-Historie abrufen."""
+        try:
+            limit = int(query_params.get('limit', [10])[0])
+            history = get_history(limit)
+            
+            # Konvertiere für JSON-Ausgabe (Sekunden bleiben, Prozent werden entfernt)
+            for item in history:
+                # Stelle sicher, dass last_position und duration vorhanden sind
+                item['last_position'] = item.get('last_position', 0)
+                item['duration'] = item.get('duration', 0)
+                # Prozent-Feld entfernen, falls vorhanden
+                if 'percentage' in item:
+                    del item['percentage']
+            
+            self.send_json_response({
+                'success': True,
+                'history': history,
+                'count': len(history)
+            })
+            
+        except Exception as e:
+            self.send_json_response({'success': False, 'error': str(e)}, 500)
+    
     def handle_history_add(self, data):
         """POST /api/history/add - History-Eintrag hinzufügen."""
         try:
@@ -4451,18 +4501,38 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_json_response({'success': False, 'error': 'Fehlende Pflichtfelder'}, 400)
                 return
             
+            # Extrahiere und konvertiere Werte sicher
+            filepath = data['filepath']
+            filename = data['filename']
+            category = data['category']
+            position = data.get('position', 0)
+            duration = data.get('duration', 0)
+            completed = data.get('completed', False)
+            
+            # Konvertiere zu numerischen Werten (falls sie als Strings kommen)
+            try:
+                position = float(position) if position not in [None, ''] else 0
+            except:
+                position = 0
+                
+            try:
+                duration = float(duration) if duration not in [None, ''] else 0
+            except:
+                duration = 0
+            
             success = add_to_history(
-                filepath=data['filepath'],
-                filename=data['filename'],
-                category=data['category'],
-                position=data.get('position', 0),
-                duration=data.get('duration', 0),
-                completed=data.get('completed', False)
+                filepath=filepath,
+                filename=filename,
+                category=category,
+                position=position,
+                duration=duration,
+                completed=completed
             )
             
             self.send_json_response({'success': success})
             
         except Exception as e:
+            print(f"⚠️ History-Add API Fehler: {e}")
             self.send_json_response({'success': False, 'error': str(e)}, 500)
     
     def handle_history_clear(self):
@@ -4685,14 +4755,14 @@ def generate_media_cards(media_list, is_latest=False, use_grid=False):
         resume_info = ''
         resume_point = get_resume_point(filepath)
         if resume_point:
-            resume_info = f'data-resume="true" data-resume-position="{resume_point["position"]}"'
+            resume_info = f'data-resume="true" data-resume-position="{resume_point["position"]}" data-resume-timestamp="{resume_point["timestamp"]}"'
         
         # Karte generieren
         card = f'''
         <div class="media-card" data-filepath="{escape_html(safe_path)}" data-filename="{filename_js}" data-category="{category_js}" {resume_info} onclick="playMediaFromCard(this)">
             <div class="media-thumbnail" style="{bg_style}">
                 <img src="{thumbnail_url}" alt="{filename}" style="width:100%;height:100%;object-fit:cover;">
-                {f'<div class="resume-badge" title="Fortsetzen bei {resume_point["percentage"]:.0f}%"><i class="fas fa-play-circle"></i></div>' if resume_point else ''}
+                {f'<div class="resume-badge" title="Fortsetzen bei {resume_point["timestamp"]}"><i class="fas fa-play-circle"></i></div>' if resume_point else ''}
             </div>
             <div class="media-info-overlay">
                 <div class="media-title">{filename}</div>
@@ -6347,6 +6417,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         let autoplayEnabled = false;
         let currentMediaQueue = [];
         let currentMediaIndex = -1;
+        let currentMediaInfo = null;
         let volumeLevel = 0.7;
         let history = [];
         
@@ -6442,6 +6513,35 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 console.error('Fehler beim Laden der History:', error);
             }}
         }}
+
+        // Hilfsfunktion: Sekunden in hh:mm:ss formatieren
+        function formatTimestamp(seconds) {{
+            if (!seconds || isNaN(seconds)) return "0:00";
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (hours > 0) {{
+                return `${{hours}}:${{minutes.toString().padStart(2, '0')}}:${{secs.toString().padStart(2, '0')}}`;
+            }} else {{
+                return `${{minutes}}:${{secs.toString().padStart(2, '0')}}`;
+            }}
+        }}
+        
+        async function loadHistory() {{
+            try {{
+                const response = await fetch('/api/history?limit=10');
+                const data = await response.json();
+                
+                if (data.success) {{
+                    history = data.history;
+                    updateHistoryPanel();
+                }}
+            }} catch (error) {{
+                console.error('Fehler beim Laden der History:', error);
+            }}
+        }}
         
         function updateHistoryPanel() {{
             const list = document.getElementById('historyList');
@@ -6457,20 +6557,22 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 itemDiv.className = 'history-item';
                 itemDiv.onclick = () => playFromHistory(item);
                 
-                const percentage = item.duration > 0 ? Math.round((item.last_position / item.duration) * 100) : 0;
+                // Verwende formatTimestamp statt Prozent
+                const timestamp = formatTimestamp(item.last_position);
+                const duration = formatTimestamp(item.duration);
                 
                 itemDiv.innerHTML = `
                     <div class="history-title">${{escapeHtml(item.filename)}}</div>
                     <div class="history-meta">
                         <span>${{escapeHtml(item.category)}}</span>
-                        <span>${{percentage}}% gesehen</span>
+                        <span>${{timestamp}} / ${{duration}}</span>
                     </div>
                 `;
                 
                 list.appendChild(itemDiv);
             }});
         }}
-        
+               
         function playFromHistory(historyItem) {{
             playMedia(historyItem.filepath, historyItem.filename, historyItem.category);
             
@@ -6490,7 +6592,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 
                 if (data.success && data.has_resume) {{
                     const resume = data.resume;
-                    const shouldResume = confirm(`Fortsetzen bei ${{Math.round(resume.percentage)}}%?`);
+                    const shouldResume = confirm(`Fortsetzen bei ${{resume.timestamp}}?`);
                     
                     if (shouldResume) {{
                         if (currentAudio) {{
@@ -6505,7 +6607,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 console.error('Fehler beim Abrufen des Resume-Points:', error);
             }}
         }}
-        
+       
         function showSettingsPanel() {{
             document.getElementById('settingsPanel').style.display = 'block';
             loadSettings();
@@ -7055,8 +7157,12 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'];
             const videoExts = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'webm'];
             
-            // History-Eintrag hinzufügen
-            addToHistory(filepath, title, category);
+            // Füge diese globale Variable hinzu
+            currentMediaInfo = {{
+                filepath: filepath,
+                filename: title,
+                category: category
+            }};
             
             if (audioExts.includes(ext)) {{
                 playAudio(filepath, title);
@@ -7067,19 +7173,33 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             }}
         }}
         
-        function addToHistory(filepath, title, category) {{
-            // History-Eintrag via API hinzufügen
-            fetch('/api/history/add', {{
-                method: 'POST',
-                headers: {{
-                    'Content-Type': 'application/json'
-                }},
-                body: JSON.stringify({{
-                    filepath: filepath,
-                    filename: title,
-                    category: category
-                }})
-            }});
+        async function addToHistory(filepath, title, category, position = 0, duration = 0, completed = false) {{
+            try {{
+                // Stelle sicher, dass die Werte numerisch sind
+                const pos = Number(position) || 0;
+                const dur = Number(duration) || 0;
+                
+                const response = await fetch('/api/history/add', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json'
+                    }},
+                    body: JSON.stringify({{
+                        filepath: filepath,
+                        filename: title,
+                        category: category,
+                        position: pos,      // Numerischer Wert
+                        duration: dur,      // Numerischer Wert
+                        completed: completed
+                    }})
+                }});
+                
+                const data = await response.json();
+                return data.success;
+            }} catch (error) {{
+                console.error('History-Fehler:', error);
+                return false;
+            }}
         }}
         
         function playAudio(filepath, title) {{
@@ -7096,15 +7216,50 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             document.getElementById('playerTitle').textContent = title;
             document.getElementById('volumeControl').value = volumeLevel;
             
-            currentAudio.addEventListener('loadedmetadata', updatePlayerTime);
-            currentAudio.addEventListener('timeupdate', updateProgress);
+            currentAudio.addEventListener('loadedmetadata', function() {{
+                updatePlayerTime();
+                
+                // WICHTIG: Füge History-Eintrag mit Dauer hinzu
+                if (currentMediaInfo && this.duration) {{
+                    const duration = Number(this.duration);
+                    if (!isNaN(duration) && duration > 0) {{
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename, 
+                                    currentMediaInfo.category, 0, duration);
+                    }}
+                }}
+            }});
+
             currentAudio.addEventListener('ended', () => {{
                 isPlaying = false;
                 document.getElementById('playBtnIcon').className = 'fas fa-play';
                 updateProgress();
                 
+                // WICHTIG: Update History mit abgeschlossenem Status
+                if (currentMediaInfo && currentAudio.duration) {{
+                    const duration = Number(currentAudio.duration);
+                    const position = Number(currentAudio.currentTime);
+                    if (!isNaN(duration) && !isNaN(position) && duration > 0) {{
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                    currentMediaInfo.category, position, duration, true);
+                    }}
+                }}
+                
                 if (autoplayEnabled) {{
                     setTimeout(playNextMedia, 1000);
+                }}
+            }});
+            
+            currentAudio.addEventListener('timeupdate', function() {{
+                updateProgress();
+                
+                // Aktualisiere History periodisch (alle 30 Sekunden)
+                if (currentMediaInfo && this.duration) {{
+                    const duration = Number(this.duration);
+                    const currentTime = Math.floor(this.currentTime);
+                    if (!isNaN(duration) && duration > 0 && currentTime % 30 === 0) {{
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                   currentMediaInfo.category, currentTime, duration);
+                    }}
                 }}
             }});
             
@@ -7127,7 +7282,22 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             videoPlayer.removeAttribute('src');
             videoPlayer.load();
             
+            videoPlayer.onloadedmetadata = function() {{
+                // WICHTIG: Füge History-Eintrag mit Dauer hinzu
+                if (currentMediaInfo && this.duration) {{
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                currentMediaInfo.category, 0, this.duration);
+                }}
+            }};
+            
             videoPlayer.onended = function() {{
+                // WICHTIG: Update History mit abgeschlossenem Status
+                if (currentMediaInfo && this.duration) {{
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                currentMediaInfo.category, this.currentTime, 
+                                this.duration, true);
+                }}
+                
                 if (autoplayEnabled) {{
                     setTimeout(playNextMedia, 1000);
                 }}
@@ -7442,14 +7612,13 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             
             // Resume-Point prüfen
             const hasResume = media.hasResume || false;
-            const resumePosition = media.resumePosition || 0;
-            const resumePercentage = media.resumePercentage || 0;
+            const resumeTimestamp = media.resumeTimestamp || '';
             
             return `
                 <div class="media-card" onclick="playMediaFromCard(this)" data-filepath="${{safePath}}" data-filename="${{filename}}" data-category="${{category}}">
                     <div class="media-thumbnail">
                         <img src="${{thumbnailUrl}}" alt="${{filename}}" style="width:100%;height:100%;object-fit:cover;">
-                        ${{hasResume ? `<div class="resume-badge" title="Fortsetzen bei ${{resumePercentage}}%"><i class="fas fa-play-circle"></i></div>` : ''}}
+                        ${{hasResume ? `<div class="resume-badge" title="Fortsetzen bei ${{resumeTimestamp}}"><i class="fas fa-play-circle"></i></div>` : ''}}
                     </div>
                     <div class="media-info-overlay">
                         <div class="media-title">${{filename}}</div>
@@ -7585,11 +7754,67 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             if (e.key === 'Enter') performSearch();
         }});
         
+        // !!! WICHTIG: NUR EIN DOMContentLoaded EVENT-LISTENER !!!
+        // Zwei oder mehr DOMContentLoaded Listener blockieren Buttons!
         document.addEventListener('DOMContentLoaded', () => {{
             initDarkMode();
-            loadSettings(); // Ersetzt loadAutoplaySetting()
-            showHome();
+            loadSettings();  // Lädt Einstellungen aus Datenbank (Volume, Autoplay, etc.)
+            showHome();      // Zeigt Startseite
         }});
+        
+        // !!! GEFÄHRLICHER ORT: VIDEO PLAYER EVENT LISTENER !!!
+        // Problem: Video-Player Element wird erst geladen wenn Video abgespielt wird
+        // Lösung: Event-Listener müssen dynamisch gesetzt werden
+        // !!! NICHT IN DOMContentLoaded EINBAUEN - ERZEUGT KONFLIKTE !!!
+        function setupVideoPlayerListeners() {{
+            const videoPlayer = document.getElementById('videoPlayer');
+            if (!videoPlayer) return;  // Element existiert noch nicht
+            
+            // !!! WICHTIG: Verhindere doppelte Event-Listener !!!
+            // Das 'hasListeners' Flag wird direkt am Element gespeichert
+            if (videoPlayer.hasListeners) return;
+            videoPlayer.hasListeners = true;
+            
+            // !!! HISTORY-UPDATE WÄHREND WIEDERGABE !!!
+            // Wird alle ~30 Sekunden aufgerufen um Performance zu schonen
+            videoPlayer.addEventListener('timeupdate', function() {{
+                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
+                    const currentTime = Math.floor(this.currentTime);
+                    if (currentTime % 30 === 0) {{  // Nur alle 30 Sekunden
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                   currentMediaInfo.category, currentTime, this.duration);
+                    }}
+                }}
+            }});
+            
+            // !!! HISTORY-UPDATE BEI PAUSE !!!
+            // Wird aufgerufen wenn Benutzer Video pausiert
+            videoPlayer.addEventListener('pause', function() {{
+                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                               currentMediaInfo.category, this.currentTime, this.duration);
+                }}
+            }});
+            
+            // !!! KEIN 'ended' EVENT-LISTENER HIER !!!
+            // Das 'ended' Event wird bereits in playVideo() Funktion gehandelt
+            // !!! DO NOT ADD 'ended' LISTENER HERE !!!
+        }}
+        
+        // !!! DYNAMISCHE EVENT-LISTENER INITIALISIERUNG !!!
+        // Methode 1: Regelmäßige Prüfung (alle 1 Sekunde)
+        setInterval(setupVideoPlayerListeners, 1000);
+        
+        // Methode 2: Nach DOMContentLoaded prüfen
+        // !!! WICHTIG: setupVideoPlayerListeners als Callback, nicht als neuer Listener !!!
+        document.addEventListener('DOMContentLoaded', setupVideoPlayerListeners);
+        
+        // !!! BEI ZUKÜNFTIGEN ÄNDERUNGEN: !!!
+        // 1. NIE einen zweiten DOMContentLoaded Event-Listener hinzufügen
+        // 2. Video-Player Event-Listener nur in setupVideoPlayerListeners() ändern
+        // 3. hasListeners Flag beachten um doppelte Listener zu vermeiden
+        // 4. 'ended' Event wird in playVideo() gehandelt - nicht hier!
+        
     </script>
 </body>
 </html>'''
@@ -7954,6 +8179,67 @@ def ensure_hierarchy_cache():
     print(f"   ⚠️ Fehler: {errors}")
     return True
 
+def migrate_history_durations():
+    """
+    Migriert bestehende History-Einträge, um Dauer-Informationen hinzuzufügen.
+    """
+    try:
+        if not os.path.exists(SETTINGS_DB_PATH):
+            return False
+            
+        conn = sqlite3.connect(SETTINGS_DB_PATH)
+        cursor = conn.cursor()
+        
+        # Hole alle Einträge ohne Dauer (duration=0)
+        cursor.execute('SELECT id, filepath FROM playback_history WHERE duration = 0')
+        entries = cursor.fetchall()
+        
+        print(f"🔄 Migriere {len(entries)} History-Einträge...")
+        migrated = 0
+        
+        for entry_id, filepath in entries:
+            try:
+                if os.path.exists(filepath):
+                    ext = os.path.splitext(filepath)[1].lower()
+                    duration = 0
+                    
+                    # Versuche Dauer zu ermitteln
+                    if ext in VIDEO_EXTENSIONS or ext in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
+                        if FFPROBE_EXECUTABLE:
+                            cmd = [
+                                FFPROBE_EXECUTABLE,
+                                '-v', 'error',
+                                '-show_entries', 'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1',
+                                filepath
+                            ]
+                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                            if result.returncode == 0:
+                                duration = float(result.stdout.strip())
+                                
+                    # Update Datenbank (mindestens 1 Sekunde)
+                    if duration > 0:
+                        cursor.execute('UPDATE playback_history SET duration = ? WHERE id = ?', 
+                                     (duration, entry_id))
+                        migrated += 1
+                        
+                        if migrated % 10 == 0:
+                            print(f"   Migriert: {migrated}/{len(entries)}")
+                    
+            except Exception as e:
+                print(f"⚠️ Fehler bei Migration von {filepath}: {e}")
+                continue
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Migration abgeschlossen: {migrated} Einträge aktualisiert")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Migrationsfehler: {e}")
+        return False
+
 # -----------------------------------------------------------------------------
 # HTTP REQUEST HANDLER KORREKTUR
 # -----------------------------------------------------------------------------
@@ -8306,6 +8592,17 @@ def main():
         print("✅ cairosvg installiert")
     
     print("=" * 70)
+
+    # Database Migration für History
+    print("\n🔄 Prüfe History-Datenbank auf Migration...")
+    try:
+        migrated = migrate_history_durations()
+        if migrated:
+            print("✅ History-Datenbank migriert (Dauer-Informationen hinzugefügt)")
+        else:
+            print("✅ History-Datenbank ist aktuell")
+    except Exception as e:
+        print(f"⚠️ Migration nicht möglich: {e}")
     
     # Cleanup verwaiste FFmpeg-Prozesse beim Start
     print("🧹 Prüfe auf verwaiste FFmpeg-Prozesse...")
