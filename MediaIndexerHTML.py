@@ -714,11 +714,27 @@ def get_resume_point(filepath):
         if result and result[0] > 0 and not result[2]:  # Position > 0 und nicht completed
             position, duration, _ = result
             
-            # Konvertiere Sekunden in hh:mm:ss Format
+            # ✅ KORRIGIERTE format_timestamp Funktion (ohne isNaN)
             def format_timestamp(seconds):
+                """Konvertiert Sekunden in hh:mm:ss Format."""
+                # Validierung
+                if seconds is None:
+                    return "0:00"
+                
+                try:
+                    seconds = float(seconds)
+                except (ValueError, TypeError):
+                    return "0:00"
+                
+                if seconds <= 0:
+                    return "0:00"
+                
+                # Berechnung
                 hours = int(seconds // 3600)
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
+                
+                # Formatierung
                 if hours > 0:
                     return f"{hours}:{minutes:02d}:{secs:02d}"
                 else:
@@ -5387,6 +5403,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             top: 10px;
             right: 10px;
             background-color: rgba(46, 204, 113, 0.9);
+            animation: resume-pulse 2s ease-in-out infinite;
             color: white;
             width: 40px;
             height: 40px;
@@ -5397,6 +5414,16 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             font-size: 1.5rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.5);
             z-index: 5;
+        }}
+        @keyframes resume-pulse {{
+            0%, 100% {{
+                transform: scale(1);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            }}
+            50% {{
+                transform: scale(1.1);
+                box-shadow: 0 4px 16px rgba(46, 204, 113, 0.6);
+            }}
         }}
         .media-info-overlay {{
             position: absolute;
@@ -5607,6 +5634,18 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             background: var(--accent-color);
             width: 0%;
             transition: width 0.1s;
+        }}
+        .history-progress-bar {{
+            height: 4px;
+            background: var(--light-color);
+            border-radius: 2px;
+            margin: 5px 0;
+            overflow: hidden;
+        }}
+        .history-progress-fill {{
+            height: 100%;
+            background: var(--accent-color);
+            transition: width 0.3s;
         }}
         .player-time {{
             min-width: 100px;
@@ -6548,7 +6587,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             list.innerHTML = '';
             
             if (history.length === 0) {{
-                list.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-light);">Keine History verfügbar</div>';
+                list.innerHTML = '<div style="...">Keine History verfügbar</div>';
                 return;
             }}
             
@@ -6557,15 +6596,20 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 itemDiv.className = 'history-item';
                 itemDiv.onclick = () => playFromHistory(item);
                 
-                // Verwende formatTimestamp statt Prozent
                 const timestamp = formatTimestamp(item.last_position);
-                const duration = formatTimestamp(item.duration);
+                const totalTimestamp = formatTimestamp(item.duration);
+                const percentage = item.duration > 0 
+                    ? (item.last_position / item.duration * 100) 
+                    : 0;
                 
                 itemDiv.innerHTML = `
                     <div class="history-title">${{escapeHtml(item.filename)}}</div>
+                    <div class="history-progress-bar">
+                        <div class="history-progress-fill" style="width: ${{percentage}}%"></div>
+                    </div>
                     <div class="history-meta">
                         <span>${{escapeHtml(item.category)}}</span>
-                        <span>${{timestamp}} / ${{duration}}</span>
+                        <span>${{timestamp}} / ${{totalTimestamp}}</span>
                     </div>
                 `;
                 
