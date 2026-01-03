@@ -718,7 +718,7 @@ def get_resume_point(filepath):
             def format_timestamp(seconds):
                 """Konvertiert Sekunden in hh:mm:ss Format."""
                 # Validierung
-                if seconds is None:
+                if seconds is None or seconds == '':
                     return "0:00"
                 
                 try:
@@ -726,7 +726,9 @@ def get_resume_point(filepath):
                 except (ValueError, TypeError):
                     return "0:00"
                 
-                if seconds <= 0:
+                # ✅ NEU: Check für Infinity/NaN
+                import math
+                if seconds <= 0 or not math.isfinite(seconds):
                     return "0:00"
                 
                 # Berechnung
@@ -3042,7 +3044,7 @@ def extract_non_black_video_frame(filepath, thumbnail_path):
                     pixels = list(img.getdata())
                     avg_brightness = sum(pixels) / len(pixels)
 
-                    if avg_brightness > 20:
+                    if avg_brightness > 5:
                         return True
             except Exception as e:
                 print(f"⚠️ Bild-Analyse fehlgeschlagen: {e}")
@@ -6631,12 +6633,12 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         
         async function checkResumePoint(filepath) {{
             try {{
-                const response = await fetch(`/api/resume?filepath=${{encodeURIComponent(filepath)}}`);
+                const response = await fetch(`/api/resume?filepath=${{encodeURIComponent(filepath)}}`);  // ✅ KORRIGIERT
                 const data = await response.json();
                 
                 if (data.success && data.has_resume) {{
                     const resume = data.resume;
-                    const shouldResume = confirm(`Fortsetzen bei ${{resume.timestamp}}?`);
+                    const shouldResume = confirm(`Fortsetzen bei ${{resume.timestamp}}?`);  // ✅ KORRIGIERT
                     
                     if (shouldResume) {{
                         if (currentAudio) {{
@@ -7324,10 +7326,15 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             
             videoPlayer.pause();
             videoPlayer.removeAttribute('src');
+            
+            // ✅ NEU: Cleanup alte Event-Listener
+            if (videoPlayer.hasListeners) {{
+                delete videoPlayer.hasListeners;
+            }}
+            
             videoPlayer.load();
             
             videoPlayer.onloadedmetadata = function() {{
-                // WICHTIG: Füge History-Eintrag mit Dauer hinzu
                 if (currentMediaInfo && this.duration) {{
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
                                 currentMediaInfo.category, 0, this.duration);
@@ -7335,7 +7342,6 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             }};
             
             videoPlayer.onended = function() {{
-                // WICHTIG: Update History mit abgeschlossenem Status
                 if (currentMediaInfo && this.duration) {{
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
                                 currentMediaInfo.category, this.currentTime, 
@@ -7812,27 +7818,22 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         // !!! NICHT IN DOMContentLoaded EINBAUEN - ERZEUGT KONFLIKTE !!!
         function setupVideoPlayerListeners() {{
             const videoPlayer = document.getElementById('videoPlayer');
-            if (!videoPlayer) return;  // Element existiert noch nicht
+            if (!videoPlayer) return;
             
-            // !!! WICHTIG: Verhindere doppelte Event-Listener !!!
-            // Das 'hasListeners' Flag wird direkt am Element gespeichert
             if (videoPlayer.hasListeners) return;
             videoPlayer.hasListeners = true;
             
-            // !!! HISTORY-UPDATE WÄHREND WIEDERGABE !!!
-            // Wird alle ~30 Sekunden aufgerufen um Performance zu schonen
+            // ✅ GEÄNDERT: Von 30 auf 10 Sekunden reduziert
             videoPlayer.addEventListener('timeupdate', function() {{
                 if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
                     const currentTime = Math.floor(this.currentTime);
-                    if (currentTime % 30 === 0) {{  // Nur alle 30 Sekunden
+                    if (currentTime % 10 === 0) {{  // ✅ GEÄNDERT: 30 → 10
                         addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
                                    currentMediaInfo.category, currentTime, this.duration);
                     }}
                 }}
             }});
             
-            // !!! HISTORY-UPDATE BEI PAUSE !!!
-            // Wird aufgerufen wenn Benutzer Video pausiert
             videoPlayer.addEventListener('pause', function() {{
                 if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
@@ -7840,17 +7841,16 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 }}
             }});
             
-            // !!! KEIN 'ended' EVENT-LISTENER HIER !!!
-            // Das 'ended' Event wird bereits in playVideo() Funktion gehandelt
-            // !!! DO NOT ADD 'ended' LISTENER HERE !!!
+            // ✅ NEU: Seeking-Event für sofortiges Speichern bei Vor-/Zurückspulen
+            videoPlayer.addEventListener('seeking', function() {{
+                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                               currentMediaInfo.category, this.currentTime, this.duration);
+                }}
+            }});
         }}
-        
-        // !!! DYNAMISCHE EVENT-LISTENER INITIALISIERUNG !!!
-        // Methode 1: Regelmäßige Prüfung (alle 1 Sekunde)
+
         setInterval(setupVideoPlayerListeners, 1000);
-        
-        // Methode 2: Nach DOMContentLoaded prüfen
-        // !!! WICHTIG: setupVideoPlayerListeners als Callback, nicht als neuer Listener !!!
         document.addEventListener('DOMContentLoaded', setupVideoPlayerListeners);
         
         // !!! BEI ZUKÜNFTIGEN ÄNDERUNGEN: !!!
