@@ -1563,11 +1563,16 @@ def natural_sort_key(s):
     if not s:
         return []
     
+    # Entferne Jahre in Klammern UND Dateiendung vor der Sortierung
+    s_clean = str(s)
+    s_clean = re.sub(r'\s*\(\d{4}\)', '', s_clean)  # (1992) → ""
+    s_clean = re.sub(r'\.[^.]+$', '', s_clean)      # .mp4 → ""
+    
     def convert(text):
         """Konvertiert Textteile: Zahlen werden zu Integern, Text bleibt lower."""
         return int(text) if text.isdigit() else text.lower()
     
-    return [convert(c) for c in re.split(r'(\d+)', str(s))]
+    return [convert(c) for c in re.split(r'(\d+)', s_clean)]
 
 # -----------------------------------------------------------------------------
 # HAUPT-HIERARCHIE-PARSER (MULTI-PASS)
