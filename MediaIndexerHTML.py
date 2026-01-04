@@ -6498,9 +6498,13 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                     
                     // Network Info
                     updateNetworkInfo(settings);
+
+                    // Signal dass Settings geladen sind
+                    window.settingsLoaded = true;
                 }}
             }} catch (error) {{
                 console.error('Fehler beim Laden der Einstellungen:', error);
+                window.settingsLoaded = true;
             }}
         }}
         
@@ -6682,6 +6686,11 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             
             if (currentAudio) {{
                 currentAudio.volume = volumeLevel;
+            }}
+
+            const videoPlayer = document.getElementById('videoPlayer');
+            if (videoPlayer && !videoPlayer.paused) {{
+                videoPlayer.volume = volumeLevel;
             }}
             
             // In Settings speichern
@@ -7261,11 +7270,28 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             
             const safePath = encodeURIComponent(filepath);
             currentAudio = new Audio(`/media?filepath=${{safePath}}`);
+
+            // ✅ DEFENSIVE: Warte auf Settings oder nutze Default
+            const actualVolume = volumeLevel || get_setting('volume_level', 0.7);
             currentAudio.volume = volumeLevel;
             
             document.getElementById('audioPlayer').style.display = 'block';
             document.getElementById('playerTitle').textContent = title;
             document.getElementById('volumeControl').value = volumeLevel;
+
+            // Falls Settings noch laden, Update nach Load
+            if (!window.settingsLoaded) {{
+                const checkSettings = setInterval(() => {{
+                    if (window.settingsLoaded && currentAudio) {{
+                        currentAudio.volume = volumeLevel;
+                        document.getElementById('volumeControl').value = volumeLevel;
+                        clearInterval(checkSettings);
+                    }}
+                }}, 100);
+                
+                // Timeout nach 5 Sekunden
+                setTimeout(() => clearInterval(checkSettings), 5000);
+            }}
             
             currentAudio.addEventListener('loadedmetadata', function() {{
                 updatePlayerTime();
@@ -7332,14 +7358,21 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             videoPlayer.pause();
             videoPlayer.removeAttribute('src');
             
-            // ✅ NEU: Cleanup alte Event-Listener
+            // Cleanup alte Event-Listener
             if (videoPlayer.hasListeners) {{
                 delete videoPlayer.hasListeners;
             }}
             
             videoPlayer.load();
+
+            // Warte auf Settings oder nutze Default
+            const actualVolume = window.settingsLoaded ? volumeLevel : 0.7;
+
+            //Nochmal setzen nach Metadata
+            this.volume = window.settingsLoaded ? volumeLevel : 0.7;
             
             videoPlayer.onloadedmetadata = function() {{
+                this.volume = volumeLevel;
                 if (currentMediaInfo && this.duration) {{
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
                                 currentMediaInfo.category, 0, this.duration);
