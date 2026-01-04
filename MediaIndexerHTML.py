@@ -6510,6 +6510,8 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         
         function updateNetworkInfo(settings) {{
             const info = document.getElementById('networkInfo');
+            if (!info) return;
+            
             if (settings.network_mode === 'network') {{
                 info.textContent = `Netzwerk aktiv - Zugriff über: http://${{settings.local_ip}}:${{settings.server_port}}`;
             }} else {{
@@ -6579,26 +6581,12 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             }}
         }}
         
-        async function loadHistory() {{
-            try {{
-                const response = await fetch('/api/history?limit=10');
-                const data = await response.json();
-                
-                if (data.success) {{
-                    history = data.history;
-                    updateHistoryPanel();
-                }}
-            }} catch (error) {{
-                console.error('Fehler beim Laden der History:', error);
-            }}
-        }}
-        
         function updateHistoryPanel() {{
             const list = document.getElementById('historyList');
             list.innerHTML = '';
             
             if (history.length === 0) {{
-                list.innerHTML = '<div style="...">Keine History verfügbar</div>';
+                list.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-light);">Keine History verfügbar</div>';
                 return;
             }}
             
@@ -6642,19 +6630,23 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         
         async function checkResumePoint(filepath) {{
             try {{
-                const response = await fetch(`/api/resume?filepath=${{encodeURIComponent(filepath)}}`);  // ✅ KORRIGIERT
+                const response = await fetch(`/api/resume?filepath=${{encodeURIComponent(filepath)}}`);
                 const data = await response.json();
                 
                 if (data.success && data.has_resume) {{
                     const resume = data.resume;
-                    const shouldResume = confirm(`Fortsetzen bei ${{resume.timestamp}}?`);  // ✅ KORRIGIERT
+                    // ✅ KORREKT: formatTimestamp verwenden
+                    const timestamp = formatTimestamp(resume.position);
+                    const shouldResume = confirm(`Fortsetzen bei ${{timestamp}}?`);
                     
                     if (shouldResume) {{
                         if (currentAudio) {{
                             currentAudio.currentTime = resume.position;
                         }} else {{
                             const videoPlayer = document.getElementById('videoPlayer');
-                            videoPlayer.currentTime = resume.position;
+                            if (videoPlayer) {{
+                                videoPlayer.currentTime = resume.position;
+                            }}
                         }}
                     }}
                 }}
@@ -7177,10 +7169,6 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             updateAutoplayToggle();
         }}
         
-        function loadAutoplaySetting() {{
-            // Wird jetzt von loadSettings() übernommen
-        }}
-        
         function showHome() {{
             document.getElementById('homeSection').style.display = 'block';
             document.getElementById('allMediaSection').style.display = 'none';
@@ -7272,19 +7260,20 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             currentAudio = new Audio(`/media?filepath=${{safePath}}`);
 
             // ✅ DEFENSIVE: Warte auf Settings oder nutze Default
-            const actualVolume = volumeLevel || get_setting('volume_level', 0.7);
-            currentAudio.volume = volumeLevel;
+            const actualVolume = window.settingsLoaded ? volumeLevel : 0.7;
+            currentAudio.volume = actualVolume;
             
             document.getElementById('audioPlayer').style.display = 'block';
             document.getElementById('playerTitle').textContent = title;
-            document.getElementById('volumeControl').value = volumeLevel;
+            document.getElementById('volumeControl').value = actualVolume;
 
             // Falls Settings noch laden, Update nach Load
             if (!window.settingsLoaded) {{
                 const checkSettings = setInterval(() => {{
                     if (window.settingsLoaded && currentAudio) {{
-                        currentAudio.volume = volumeLevel;
-                        document.getElementById('volumeControl').value = volumeLevel;
+                        const finalVolume = volumeLevel; // Oder window.settingsLoaded ? volumeLevel : 0.7
+                        currentAudio.volume = finalVolume;
+                        document.getElementById('volumeControl').value = finalVolume;
                         clearInterval(checkSettings);
                     }}
                 }}, 100);
@@ -7365,25 +7354,30 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             
             videoPlayer.load();
 
-            // Warte auf Settings oder nutze Default
+            // ✅ DEFENSIVE: Warte auf Settings oder nutze Default
             const actualVolume = window.settingsLoaded ? volumeLevel : 0.7;
-
-            //Nochmal setzen nach Metadata
-            this.volume = window.settingsLoaded ? volumeLevel : 0.7;
             
             videoPlayer.onloadedmetadata = function() {{
-                this.volume = volumeLevel;
+                // ✅ KORREKT: Volume nach Metadata Load setzen
+                this.volume = actualVolume;
+                
                 if (currentMediaInfo && this.duration) {{
-                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                currentMediaInfo.category, 0, this.duration);
+                    const duration = Number(this.duration);
+                    if (!isNaN(duration) && duration > 0) {{
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                    currentMediaInfo.category, 0, duration);
+                    }}
                 }}
             }};
             
             videoPlayer.onended = function() {{
                 if (currentMediaInfo && this.duration) {{
-                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                currentMediaInfo.category, this.currentTime, 
-                                this.duration, true);
+                    const duration = Number(this.duration);
+                    const position = Number(this.currentTime);
+                    if (!isNaN(duration) && !isNaN(position) && duration > 0) {{
+                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                    currentMediaInfo.category, position, duration, true);
+                    }}
                 }}
                 
                 if (autoplayEnabled) {{
@@ -7394,10 +7388,10 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             const mediaInfo = allMedia.find(m => m.filepath === filepath);
             let infoHTML = '';
             if (mediaInfo) {{
-                if (mediaInfo.category) infoHTML += `<p>Kategorie: ${{mediaInfo.category}}</p>`;
-                if (mediaInfo.genre) infoHTML += `<p>Genre: ${{mediaInfo.genre}}</p>`;
-                if (mediaInfo.year) infoHTML += `<p>Jahr: ${{mediaInfo.year}}</p>`;
-                if (mediaInfo.contributors) infoHTML += `<p>Interpret: ${{mediaInfo.contributors}}</p>`;
+                if (mediaInfo.category) infoHTML += `<p>Kategorie: ${{escapeHtml(mediaInfo.category)}}</p>`;
+                if (mediaInfo.genre) infoHTML += `<p>Genre: ${{escapeHtml(mediaInfo.genre)}}</p>`;
+                if (mediaInfo.year) infoHTML += `<p>Jahr: ${{escapeHtml(mediaInfo.year)}}</p>`;
+                if (mediaInfo.contributors) infoHTML += `<p>Interpret: ${{escapeHtml(mediaInfo.contributors)}}</p>`;
             }}
             document.getElementById('videoInfo').innerHTML = infoHTML;
             document.getElementById('videoTitle').textContent = title;
@@ -7843,29 +7837,30 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         }});
         
         // !!! WICHTIG: NUR EIN DOMContentLoaded EVENT-LISTENER !!!
-        // Zwei oder mehr DOMContentLoaded Listener blockieren Buttons!
         document.addEventListener('DOMContentLoaded', () => {{
             initDarkMode();
             loadSettings();  // Lädt Einstellungen aus Datenbank (Volume, Autoplay, etc.)
             showHome();      // Zeigt Startseite
+            setupVideoPlayerListeners(); // Video-Player Listener initialisieren
         }});
         
-        // !!! GEFÄHRLICHER ORT: VIDEO PLAYER EVENT LISTENER !!!
-        // Problem: Video-Player Element wird erst geladen wenn Video abgespielt wird
-        // Lösung: Event-Listener müssen dynamisch gesetzt werden
-        // !!! NICHT IN DOMContentLoaded EINBAUEN - ERZEUGT KONFLIKTE !!!
+        // Video Player Event Listener Setup
         function setupVideoPlayerListeners() {{
             const videoPlayer = document.getElementById('videoPlayer');
-            if (!videoPlayer) return;
+            if (!videoPlayer) {{
+                // Versuche später erneut
+                setTimeout(setupVideoPlayerListeners, 500);
+                return;
+            }}
             
+            // Verhindere doppelte Listener
             if (videoPlayer.hasListeners) return;
             videoPlayer.hasListeners = true;
             
-            // ✅ GEÄNDERT: Von 30 auf 10 Sekunden reduziert
             videoPlayer.addEventListener('timeupdate', function() {{
                 if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
                     const currentTime = Math.floor(this.currentTime);
-                    if (currentTime % 10 === 0) {{  // ✅ GEÄNDERT: 30 → 10
+                    if (currentTime % 30 === 0) {{
                         addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
                                    currentMediaInfo.category, currentTime, this.duration);
                     }}
@@ -7879,7 +7874,6 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 }}
             }});
             
-            // ✅ NEU: Seeking-Event für sofortiges Speichern bei Vor-/Zurückspulen
             videoPlayer.addEventListener('seeking', function() {{
                 if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
@@ -7887,15 +7881,6 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 }}
             }});
         }}
-
-        setInterval(setupVideoPlayerListeners, 1000);
-        document.addEventListener('DOMContentLoaded', setupVideoPlayerListeners);
-        
-        // !!! BEI ZUKÜNFTIGEN ÄNDERUNGEN: !!!
-        // 1. NIE einen zweiten DOMContentLoaded Event-Listener hinzufügen
-        // 2. Video-Player Event-Listener nur in setupVideoPlayerListeners() ändern
-        // 3. hasListeners Flag beachten um doppelte Listener zu vermeiden
-        // 4. 'ended' Event wird in playVideo() gehandelt - nicht hier!
         
     </script>
 </body>
