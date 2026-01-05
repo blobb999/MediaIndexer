@@ -833,6 +833,12 @@ def get_local_ip():
 # HILFSFUNKTIONEN: HTML, UI & VISUALISIERUNG
 # -----------------------------------------------------------------------------
 
+CACHE_VERSION = f"v{hash(time.time()) % 1000}"  # Einfacher Hash basierend auf Zeit
+
+def get_cache_version():
+    """Gibt Cache-Version für HTML-Cache-Invalidierung zurück."""
+    return CACHE_VERSION
+
 def escape_html(text):
     """
     HTML-Sonderzeichen sicher escapen um XSS zu verhindern.
@@ -4628,7 +4634,8 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
             elif base_content_type.startswith('video/') or base_content_type.startswith('audio/'):
                 self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             else:
-                self.send_header('Cache-Control', 'private, max-age=3600')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')  # NEUE ZEILE
+                self.send_header('Pragma', 'no-cache')  # NEUE ZEILE
             
             self.end_headers()
             
@@ -4977,6 +4984,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <meta name="media-cache" content="{{get_cache_version()}}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎬 Private Media Collection v1.0</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -6441,6 +6449,15 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
     <script>
         const allMedia = {all_media_json_str};
         const categoryData = {category_data_json};
+        const CACHE_VERSION = "{{get_cache_version()}}";
+        console.log('Media Cache Version:', CACHE_VERSION);
+
+        // Speichere Cache-Version in sessionStorage
+        if (!sessionStorage.getItem('media_cache_version') || 
+            sessionStorage.getItem('media_cache_version') !== CACHE_VERSION) {{
+            sessionStorage.setItem('media_cache_version', CACHE_VERSION);
+            console.log('Cache Version aktualisiert:', CACHE_VERSION);
+        }}
         
         let currentFilters = {{
             category: '',
