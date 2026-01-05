@@ -7246,9 +7246,23 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         
         async function addToHistory(filepath, title, category, position = 0, duration = 0, completed = false) {{
             try {{
-                // Stelle sicher, dass die Werte numerisch sind
-                const pos = Number(position) || 0;
-                const dur = Number(duration) || 0;
+                // Stelle sicher, dass die Werte numerisch sind und gültig
+                const pos = parseFloat(position);
+                const dur = parseFloat(duration);
+                
+                // Validierung: Nur senden wenn beide Werte gültig sind
+                if (isNaN(pos) || isNaN(dur) || dur <= 0) {{
+                    console.warn('⚠️ Ungültige History-Daten:', {{ position: pos, duration: dur }});
+                    return false;
+                }}
+                
+                console.log('📝 Speichere History:', {{
+                    filename: title,
+                    position: pos.toFixed(2),
+                    duration: dur.toFixed(2),
+                    percentage: ((pos / dur) * 100).toFixed(1) + '%',
+                    completed: completed
+                }});
                 
                 const response = await fetch('/api/history/add', {{
                     method: 'POST',
@@ -7259,16 +7273,19 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                         filepath: filepath,
                         filename: title,
                         category: category,
-                        position: pos,      // Numerischer Wert
-                        duration: dur,      // Numerischer Wert
+                        position: pos,
+                        duration: dur,
                         completed: completed
                     }})
                 }});
                 
                 const data = await response.json();
+                if (!data.success) {{
+                    console.error('❌ History-Speicherung fehlgeschlagen:', data.error);
+                }}
                 return data.success;
             }} catch (error) {{
-                console.error('History-Fehler:', error);
+                console.error('❌ History-Fehler:', error);
                 return false;
             }}
         }}
@@ -7289,15 +7306,15 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             document.getElementById('playerTitle').textContent = title;
             document.getElementById('volumeControl').value = actualVolume;
             
+            // Speichere erste History-Eintrag erst nach loadedmetadata
             currentAudio.addEventListener('loadedmetadata', function() {{
                 updatePlayerTime();
                 
-                if (currentMediaInfo && this.duration) {{
-                    const duration = Number(this.duration);
-                    if (!isNaN(duration) && duration > 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename, 
-                                    currentMediaInfo.category, 0, duration);
-                    }}
+                const duration = parseFloat(this.duration);
+                if (currentMediaInfo && !isNaN(duration) && duration > 0) {{
+                    console.log(`🎵 Audio geladen: ${{title}}, Dauer: ${{duration.toFixed(2)}}s`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename, 
+                                currentMediaInfo.category, 0, duration, false);
                 }}
             }});
 
@@ -7306,13 +7323,13 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 document.getElementById('playBtnIcon').className = 'fas fa-play';
                 updateProgress();
                 
-                if (currentMediaInfo && currentAudio.duration) {{
-                    const duration = Number(currentAudio.duration);
-                    const position = Number(currentAudio.currentTime);
-                    if (!isNaN(duration) && !isNaN(position) && duration > 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                    currentMediaInfo.category, position, duration, true);
-                    }}
+                const duration = parseFloat(currentAudio.duration);
+                const position = parseFloat(currentAudio.currentTime);
+                
+                if (currentMediaInfo && !isNaN(duration) && !isNaN(position) && duration > 0) {{
+                    console.log(`✅ Audio beendet: ${{currentMediaInfo.filename}}`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                currentMediaInfo.category, position, duration, true);
                 }}
                 
                 if (autoplayEnabled) {{
@@ -7320,16 +7337,21 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
                 }}
             }});
             
+            // Speichere alle 30 Sekunden
+            let lastSavedTime = 0;
             currentAudio.addEventListener('timeupdate', function() {{
                 updateProgress();
                 
-                if (currentMediaInfo && this.duration) {{
-                    const duration = Number(this.duration);
-                    const currentTime = Math.floor(this.currentTime);
-                    if (!isNaN(duration) && duration > 0 && currentTime % 30 === 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                   currentMediaInfo.category, currentTime, duration);
-                    }}
+                const currentTime = Math.floor(this.currentTime);
+                const duration = parseFloat(this.duration);
+                
+                // Speichere alle 30 Sekunden
+                if (currentMediaInfo && !isNaN(duration) && duration > 0 && 
+                    currentTime > 0 && currentTime - lastSavedTime >= 30) {{
+                    lastSavedTime = currentTime;
+                    console.log(`💾 Auto-Save: ${{currentTime}}s / ${{duration.toFixed(0)}}s`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                               currentMediaInfo.category, currentTime, duration, false);
                 }}
             }});
             
@@ -7362,23 +7384,22 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             videoPlayer.onloadedmetadata = function() {{
                 this.volume = actualVolume;
                 
-                if (currentMediaInfo && this.duration) {{
-                    const duration = Number(this.duration);
-                    if (!isNaN(duration) && duration > 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                    currentMediaInfo.category, 0, duration);
-                    }}
+                const duration = parseFloat(this.duration);
+                if (currentMediaInfo && !isNaN(duration) && duration > 0) {{
+                    console.log(`🎬 Video geladen: ${{title}}, Dauer: ${{duration.toFixed(2)}}s`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                currentMediaInfo.category, 0, duration, false);
                 }}
             }};
             
             videoPlayer.onended = function() {{
-                if (currentMediaInfo && this.duration) {{
-                    const duration = Number(this.duration);
-                    const position = Number(this.currentTime);
-                    if (!isNaN(duration) && !isNaN(position) && duration > 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                    currentMediaInfo.category, position, duration, true);
-                    }}
+                const duration = parseFloat(this.duration);
+                const position = parseFloat(this.currentTime);
+                
+                if (currentMediaInfo && !isNaN(duration) && !isNaN(position) && duration > 0) {{
+                    console.log(`✅ Video beendet: ${{currentMediaInfo.filename}}`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                                currentMediaInfo.category, position, duration, true);
                 }}
                 
                 if (autoplayEnabled) {{
@@ -7866,27 +7887,41 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             if (videoPlayer.hasListeners) return;
             videoPlayer.hasListeners = true;
             
+            let lastSavedTime = 0;
+            
             videoPlayer.addEventListener('timeupdate', function() {{
-                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
-                    const currentTime = Math.floor(this.currentTime);
-                    if (currentTime % 30 === 0) {{
-                        addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                                   currentMediaInfo.category, currentTime, this.duration);
-                    }}
+                const currentTime = Math.floor(this.currentTime);
+                const duration = parseFloat(this.duration);
+                
+                // Speichere alle 30 Sekunden
+                if (currentMediaInfo && !isNaN(duration) && duration > 0 && 
+                    currentTime > 0 && currentTime - lastSavedTime >= 30) {{
+                    lastSavedTime = currentTime;
+                    console.log(`💾 Video Auto-Save: ${{currentTime}}s / ${{duration.toFixed(0)}}s`);
+                    addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
+                               currentMediaInfo.category, currentTime, duration, false);
                 }}
             }});
             
             videoPlayer.addEventListener('pause', function() {{
-                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
+                const duration = parseFloat(this.duration);
+                const position = parseFloat(this.currentTime);
+                
+                if (currentMediaInfo && !isNaN(duration) && !isNaN(position) && duration > 0 && position > 0) {{
+                    console.log(`⏸️ Video pausiert bei: ${{position.toFixed(2)}}s`);
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                               currentMediaInfo.category, this.currentTime, this.duration);
+                               currentMediaInfo.category, position, duration, false);
                 }}
             }});
             
             videoPlayer.addEventListener('seeking', function() {{
-                if (currentMediaInfo && this.duration && !isNaN(this.duration)) {{
+                const duration = parseFloat(this.duration);
+                const position = parseFloat(this.currentTime);
+                
+                if (currentMediaInfo && !isNaN(duration) && !isNaN(position) && duration > 0 && position > 0) {{
+                    console.log(`⏩ Video gesprungen zu: ${{position.toFixed(2)}}s`);
                     addToHistory(currentMediaInfo.filepath, currentMediaInfo.filename,
-                               currentMediaInfo.category, this.currentTime, this.duration);
+                               currentMediaInfo.category, position, duration, false);
                 }}
             }});
         }}
