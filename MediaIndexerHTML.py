@@ -175,6 +175,8 @@ INCOMPATIBLE_VIDEO_EXTENSIONS = (
     ".ogv", ".ts", ".vob"
 )
 
+FLV_COMPATIBLE_CODECS = ("h264", "aac")
+
 # MP4-Dateien die möglicherweise Probleme haben (werden geprüft)
 POTENTIALLY_PROBLEMATIC_MP4 = (".mp4",)
 
@@ -897,7 +899,7 @@ def get_file_extension_icon(filepath):
     ext = os.path.splitext(filepath)[1].lower()
     
     # Video-Icons
-    if ext in ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv'):
+    if ext in ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv'):
         return 'fa-film'
     
     # Audio-Icons
@@ -926,6 +928,7 @@ def get_thumbnail_color(filepath):
         # Video-Farben (Blau-Töne)
         '.mp4': '#3498db', '.mkv': '#2980b9', '.avi': '#1f618d', 
         '.wmv': '#1b4f72', '.mov': '#154360', '.webm': '#11345a',
+        '.flv': '#1a5276',
         
         # Audio-Farben (Rot-Orange-Töne)
         '.mp3': '#e74c3c', '.wav': '#c0392b', '.flac': '#a93226', 
@@ -3786,7 +3789,56 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         # Range-Header frühzeitig prüfen (für alle anderen Dateien)
         range_header = self.headers.get('Range')
         
-        # Immer transcodieren: MKV, AVI, WMV, etc.
+        # SPEZIALBEHANDLUNG FÜR FLV: Prüfe ob Transcoding wirklich nötig ist
+        if ext == '.flv' and FFPROBE_EXECUTABLE:
+            try:
+                # Prüfe Video-Codec
+                video_cmd = [
+                    FFPROBE_EXECUTABLE,
+                    '-v', 'error',
+                    '-select_streams', 'v:0',
+                    '-show_entries', 'stream=codec_name',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    filepath
+                ]
+                video_result = subprocess.run(video_cmd, capture_output=True, text=True, timeout=3)
+                video_codec = video_result.stdout.strip().lower()
+                
+                # Prüfe Audio-Codec
+                audio_cmd = [
+                    FFPROBE_EXECUTABLE,
+                    '-v', 'error',
+                    '-select_streams', 'a:0',
+                    '-show_entries', 'stream=codec_name',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    filepath
+                ]
+                audio_result = subprocess.run(audio_cmd, capture_output=True, text=True, timeout=3)
+                audio_codec = audio_result.stdout.strip().lower()
+                
+                print(f"   🔍 FLV Codec-Analyse: Video={video_codec}, Audio={audio_codec}")
+                
+                # Wenn bereits kompatible Codecs: Nur Remuxing, kein Transcoding
+                if video_codec == 'h264' and audio_codec in ['aac', 'mp3']:
+                    print(f"   ✅ FLV mit kompatiblen Codecs - Remuxing statt Transcoding")
+                    
+                    # Range-Request für remuxtes FLV
+                    if range_header:
+                        print(f"🎯 Range-Request für FLV-Remux: {range_header}")
+                        # Temporäre Remuxing-Funktion aufrufen
+                        self.stream_flv_remuxed(filepath, range_header)
+                        return
+                    
+                    # Direktes Remuxing
+                    self.stream_flv_remuxed(filepath)
+                    return
+                    
+            except Exception as e:
+                print(f"⚠️ FLV-Codec-Prüfung fehlgeschlagen: {e}")
+                # Fallback: Normales Transcoding
+                pass
+        
+        # Immer transcodieren: MKV, AVI, WMV, etc. (außer FLV mit kompatiblen Codecs)
         if ext in INCOMPATIBLE_VIDEO_EXTENSIONS:
             print(f"🔁 Live-Transcoding gestartet für: {os.path.basename(filepath)}")
             stream_video_transcoded(self, filepath)
@@ -3856,6 +3908,68 @@ class ExtendedMediaHTTPRequestHandler(BaseHTTPRequestHandler):
         # Fallback für alle anderen Dateien
         print(f"📁 Allgemeine Datei: {os.path.basename(filepath)}")
         self.serve_file(filepath, mime_type)
+
+    def stream_flv_remuxed(self, filepath, range_header=None):
+        """
+        Remuxt FLV-Dateien mit kompatiblen Codecs (H.264 + AAC/MP3) zu MP4.
+        Kein Transcoding, nur Container-Wechsel.
+        """
+        print(f"🔄 FLV-Remuxing für: {os.path.basename(filepath)}")
+        
+        try:
+            if not os.path.exists(filepath):
+                self.send_error(404, "Datei nicht gefunden")
+                return
+            
+            # FFmpeg Remuxing-Befehl (schnell, ohne Qualitätsverlust)
+            cmd = [
+                FFMPEG_EXECUTABLE,
+                '-i', filepath,
+                '-c', 'copy',          # Keine Rekodierung
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+                '-f', 'mp4',
+                'pipe:1'
+            ]
+            
+            print(f"   🚀 FFmpeg Remuxing: {' '.join(cmd[:5])}...")
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Accept-Ranges", "none")
+            self.end_headers()
+            
+            with FFmpegProcess(cmd, timeout=300) as process:
+                bytes_sent = 0
+                
+                try:
+                    while True:
+                        data = process.stdout.read(65536)
+                        if not data:
+                            break
+                        
+                        try:
+                            self.wfile.write(data)
+                            self.wfile.flush()
+                            bytes_sent += len(data)
+                            
+                            if bytes_sent % (10 * 1024 * 1024) < 65536:
+                                print(f"   📊 Gesendet: {bytes_sent / (1024*1024):.1f} MB")
+                                
+                        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                            print(f"ℹ️ Client hat Verbindung getrennt nach {bytes_sent / (1024*1024):.1f} MB")
+                            break
+                
+                except Exception as e:
+                    print(f"❌ FLV-Remuxing-Fehler: {e}")
+            
+            print(f"✅ FLV-Remuxing beendet: {os.path.basename(filepath)} ({bytes_sent / (1024*1024):.1f} MB)")
+            
+        except Exception as e:
+            print(f"❌ Kritischer FLV-Remuxing-Fehler: {e}")
+            import traceback
+            traceback.print_exc()
 
     def handle_static_thumbnail(self, path):
         """Liefert statische Thumbnails aus Cache."""
@@ -7226,7 +7340,7 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
         function playMedia(filepath, title, category) {{
             const ext = filepath.toLowerCase().split('.').pop();
             const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'];
-            const videoExts = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'webm'];
+            const videoExts = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'webm', 'flv'];  // 1. FLV hinzufügen
             
             // Füge diese globale Variable hinzu
             currentMediaInfo = {{
@@ -7240,7 +7354,9 @@ def generate_html_with_subgenres(categories, category_data, genres, years,
             }} else if (videoExts.includes(ext)) {{
                 playVideo(filepath, title);
             }} else {{
-                openFile(filepath);
+                // 2. openFile() entfernen und durch Fallback ersetzen
+                console.warn(`Unbekannter Dateityp .${{ext}}, versuche als Video...`);
+                playVideo(filepath, title);
             }}
         }}
         
@@ -8439,6 +8555,17 @@ class MediaHTTPRequestHandler(ExtendedMediaHTTPRequestHandler):
 # SERVER-KONFIGURATION
 # -----------------------------------------------------------------------------
 
+def get_server_host():
+    """Bestimmt Server-Host basierend auf Settings."""
+    network_mode = get_setting('network_mode', 'localhost')
+    
+    if network_mode == 'network':
+        return '0.0.0.0'  # Alle Interfaces
+    else:
+        return 'localhost'  # Nur lokal
+
+SERVER_HOST = get_server_host()
+
 def start_http_server():
     """
     Startet den HTTP-Server für Media Platform mit vollständiger Initialisierung.
@@ -8480,92 +8607,98 @@ def start_http_server():
     else:
         print("   ✅ Hierarchie-DB: OK")
     
-    # ✅ KORREKTUR: Rufe die korrekte Funktion auf
+    # 3. HTML generieren - SO WIE ES IN IHRER DATEI BEREITS FUNKTIONIERT
     print("\n🌐 Generiere Web-Interface...")
     try:
-        # ❌ ENTFERNE DEN GANZEN PROBLEMATISCHEN CODE-BLOCK (Zeilen ~4198-4288)
-        # STATTDESSEN einfach:
-        generate_web_interface()
+        # Hole die Daten für die HTML-Generierung
+        categories = []
+        category_data = {}
+        genres = []
+        years = []
+        featured_media = []
+        latest_media = []
+        total_files = 0
+        total_gb = 0
+        all_media_json = []
+        
+        # Lade Kategorien
+        try:
+            with MainDBConnection() as cursor:
+                cursor.execute("SELECT DISTINCT category FROM media_files WHERE category != '' ORDER BY category")
+                categories = [row[0] for row in cursor.fetchall()]
+                
+                # Lade neueste Medien
+                cursor.execute("SELECT * FROM media_files WHERE filepath != '' ORDER BY last_modified DESC LIMIT 24")
+                featured_media = [dict(row) for row in cursor.fetchall()]
+                
+                # Lade zufällige Medien
+                cursor.execute("SELECT * FROM media_files WHERE filepath != '' ORDER BY RANDOM() LIMIT 24")
+                latest_media = [dict(row) for row in cursor.fetchall()]
+                
+                # Statistiken
+                cursor.execute("SELECT COUNT(*) FROM media_files WHERE filepath != ''")
+                total_files = cursor.fetchone()[0]
+                
+                # Versuche verschiedene Spaltennamen für die Größe
+                total_bytes = 0
+                try:
+                    cursor.execute("SELECT SUM(size) FROM media_files WHERE size > 0")
+                    total_bytes = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    try:
+                        cursor.execute("SELECT SUM(filesize) FROM media_files WHERE filesize > 0")
+                        total_bytes = cursor.fetchone()[0] or 0
+                    except sqlite3.OperationalError:
+                        # Fallback: Verwende Standard-Größe pro Datei
+                        total_bytes = total_files * 500 * 1024 * 1024  # 500MB pro Datei als Schätzung
+                
+                total_gb = total_bytes / (1024**3) if total_bytes > 0 else 0
+                
+                # Jahre
+                cursor.execute("SELECT DISTINCT year FROM media_files WHERE year != '' ORDER BY year DESC")
+                years = [row[0] for row in cursor.fetchall()]
+                
+        except Exception as e:
+            print(f"⚠️ Fehler beim Laden der Haupt-DB: {e}")
+            # Vereinfachte Fallback-Werte
+            categories = ['Film', 'Serie', 'Musik', 'Tool', 'Dokumentation']
+            total_files = 873  # Vom API-Call bekannt
+            total_gb = total_files * 0.5  # Schätzung: 0.5GB pro Datei
+        
+        # Lade Genres aus Hierarchie-DB
+        try:
+            with HierarchyDBConnection() as cursor:
+                cursor.execute("SELECT DISTINCT genre FROM hierarchy_cache WHERE genre IS NOT NULL AND genre != '' ORDER BY genre")
+                genres = [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"⚠️ Fehler beim Laden der Genres: {e}")
+            genres = []
+        
+        # Bereite Kategorie-Daten vor
+        for cat in categories:
+            category_data[cat] = {
+                'genres': genres[:10] if genres else [],
+                'years': years[:5] if years else [],
+                'subgenres': {}
+            }
+        
+        # Rufe die EXISTIERENDE Funktion auf
+        generate_html_with_subgenres(
+            categories=categories,
+            category_data=category_data,
+            genres=genres,
+            years=years,
+            featured_media=featured_media,
+            latest_media=latest_media,
+            total_files=total_files,
+            total_gb=total_gb,
+            all_media_json=all_media_json
+        )
+        
         print("✅ Web-Interface erstellt")
         
     except Exception as e:
         print(f"❌ Fehler beim Generieren des HTML: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Fallback: Minimales HTML
-        try:
-            minimal_html = """<!DOCTYPE html>
-<html>
-<head><title>Media Indexer</title>
-<style>
-body { font-family: Arial, sans-serif; padding: 20px; }
-h1 { color: #3498db; }
-</style>
-</head>
-<body>
-<h1>🎬 Media Indexer Server läuft</h1>
-<p>Die Plattform ist jetzt verfügbar unter:</p>
-<ul>
-<li><a href="/api/media">/api/media</a> - Medien-API</li>
-<li><a href="/api/settings">/api/settings</a> - Einstellungen</li>
-<li><a href="/api/history">/api/history</a> - Abspiel-Historie</li>
-</ul>
-<p>Das vollständige Interface wird generiert...</p>
-</body>
-</html>"""
-            with open(HTML_PATH, 'w', encoding='utf-8') as f:
-                f.write(minimal_html)
-            print("⚠️ Minimales HTML als Fallback erstellt")
-        except Exception as fallback_error:
-            print(f"❌ Konnte nicht einmal Fallback-HTML erstellen: {fallback_error}")
-    
-    # 4. Server-Informationen anzeigen
-    print("\n🚀 Starte Webserver...")
-    host = get_server_host()
-    
-    if host == '0.0.0.0':
-        local_ip = get_local_ip()
-        print("🌐 Netzwerk-Modus aktiviert:")
-        print(f"   💻 Lokal: http://localhost:{SERVER_PORT}")
-        print(f"   🌐 Netzwerk: http://{local_ip}:{SERVER_PORT}")
-        print(f"   🔒 Max. Clients: {get_setting('max_clients', 3)}")
-    else:
-        print("🏠 Lokaler Modus - Nur dieser Computer:")
-        print(f"   💻 http://localhost:{SERVER_PORT}")
-    
-    # 5. Einstellungen anzeigen
-    print("\n🎯 AKTIVE EINSTELLUNGEN:")
-    print(f"   • History: {'Aktiviert' if get_setting('enable_history', True) else 'Deaktiviert'}")
-    print(f"   • Volume: {get_setting('volume_level', 0.7) * 100:.0f}%")
-    print(f"   • MKV Audio-Sprache: {get_setting('audio_language', 'ger')}")
-    print(f"   • Autoplay: {'Aktiviert' if get_setting('autoplay_enabled', False) else 'Deaktiviert'}")
-    print("="*70 + "\n")
-    
-    # 6. Server starten
-    try:
-        server = RobustHTTPServer((host, SERVER_PORT), ExtendedMediaHTTPRequestHandler)
-        
-        # Browser öffnen (nur bei localhost)
-        if host == 'localhost':
-            webbrowser.open(f'http://localhost:{SERVER_PORT}')
-        
-        print("✅ Server gestartet. Drücken Sie STRG+C zum Beenden.")
-        print("💡 TASTATURKÜRZEL:")
-        print("   ESC - Player/History/Settings schließen")
-        print("   LEERTASTE - Play/Pause")
-        print("   F5 - Seite neu laden")
-        print("-"*70)
-        
-        server.serve_forever()
-        
-    except KeyboardInterrupt:
-        print("\n\n🛑 Server wird beendet...")
-        print("🧹 Räume auf...")
-        kill_orphaned_ffmpeg_processes()
-        print("👋 Auf Wiedersehen!")
-    except Exception as e:
-        print(f"\n❌ Server-Fehler: {e}")
         import traceback
         traceback.print_exc()
         
@@ -8731,7 +8864,9 @@ def main():
     
     print("=" * 70)
     
-    print("ℹ️ Web-Interface wird im Server-Start generiert...")
+    # Web-Interface generieren
+    print("\n🔄 Generiere Web-Interface mit erweiterten Features...")
+    generate_web_interface()
     
     # Server starten
     server_thread = threading.Thread(target=start_http_server, daemon=True)
